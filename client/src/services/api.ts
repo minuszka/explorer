@@ -1,6 +1,6 @@
 import axios from 'axios';
 import type { OperatorDiagnosisData } from '@defcon/shared/dist/contracts';
-import { banAttributionApiResponseSchema, poseObservedEventsApiResponseSchema } from '@defcon/shared';
+import { banAttributionApiResponseSchema, poseObservedEventsApiResponseSchema, dnsSeederNodesApiResponseSchema } from '@defcon/shared';
 import type { BanAttributionQuery, BanAttributionProof } from '@defcon/shared/dist/contracts';
 import type {
   ActiveMasternodeVersionsView,
@@ -33,7 +33,6 @@ import type {
   GovernanceObjectsView,
   PreReleaseNodeView,
   SeedNodeStatus,
-  DnsSeederNodeView,
   SporkGovernanceSnapshotView,
   PaginatedApiEnvelope,
   RichDistributionView,
@@ -268,10 +267,10 @@ export async function fetchSeedNodes() {
 export async function fetchDnsSeederNodes() {
   // DNS seeder snapshots may change independently of the SPA bundle. Always
   // bypass browser/CDN response caches; the API still coalesces upstream work.
-  const { data } = await api.get<ApiEnvelope<DnsSeederNodeView[]>>('/network/dns-seeder-nodes', {
+  const { data } = await api.get('/network/dns-seeder-nodes', {
     params: { t: Date.now() },
   });
-  return data.data;
+  return dnsSeederNodesApiResponseSchema.parse(data);
 }
 
 export async function fetchPreReleaseNodes() {

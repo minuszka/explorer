@@ -4,6 +4,7 @@ import axios from 'axios';
 import networkRoutes, { invalidateNetworkCache } from '../src/routes/network.routes';
 import { config } from '../src/config';
 import { rpcService } from '../src/services/rpc.service';
+import { dnsSeederNodesService } from '../src/services/dnsSeederNodes.service';
 import { logger } from '../src/utils/logger';
 
 const DNS_SEEDER_FEED_URL = 'https://seeder.example.com/nodes';
@@ -127,10 +128,23 @@ describe('network routes', () => {
     const res = await request(app).get(path);
 
     expect(res.status).toBe(200);
-    expect(res.body).toEqual({ success: true, data: [] });
+    expect(res.body).toMatchObject({ success: true, data: [] });
+    if (path.endsWith('/dns-seeder-nodes')) {
+      expect(res.body.meta.dnsSeeder.status).toBe('disabled');
+      expect(res.body.meta.daemonPeers.status).toBe('not-requested');
+    }
     expect(res.headers['cache-control']).toBe('no-store, no-cache, must-revalidate, max-age=0');
     expect(axiosGet).not.toHaveBeenCalled();
     expect(logError).not.toHaveBeenCalled();
+  });
+
+  it('GET /api/network/dns-seeder-nodes returns 503, not an empty healthy list, when no usable feed remains', async () => {
+    jest.spyOn(dnsSeederNodesService, 'getSnapshot').mockRejectedValue(new Error('DNS seeder feed unavailable'));
+    const res = await request(app).get('/api/network/dns-seeder-nodes');
+    expect(res.status).toBe(503);
+    expect(res.body).toMatchObject({ success: false, error: { code: 'SERVICE_UNAVAILABLE' } });
+    expect(res.body.data).toBeUndefined();
+    expect(res.headers['cache-control']).toBe('no-store, no-cache, must-revalidate, max-age=0');
   });
 
   it('GET /api/network/pre-release-nodes sends the feed API key and normalizes rows', async () => {

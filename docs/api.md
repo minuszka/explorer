@@ -110,6 +110,24 @@ the admin with approve and reject buttons. Bulk submissions are reviewed through
   `PRE_RELEASE_NODES_API_URL`; `PRE_RELEASE_NODES_API_KEY` is sent as `X-API-Key` from the server only and
   never reaches the browser.
 - `GET /api/network/dns-seeder-nodes`: the DNS-Seeder panel. Optional external feed at `DNS_SEEDER_API_URL`.
+  The existing `success` / `data[]` envelope now also includes `meta`: DNS feed state (`ok`, `stale`,
+  `disabled`), retrieval and last-attempt times, row counts, and the independent daemon peer snapshot's
+  state and observation time. The crawler snapshot time and completeness remain explicitly unknown;
+  fetching a feed does not establish its measurement age. Invalid feed shapes return 503, or retain a
+  still-allowed old feed labelled `stale`. An empty valid feed and a disabled feed are distinct.
+  Requests coalesce and keep the existing short cache, timeout, failure backoff and stale-age bounds.
+  Upstream feed downloads are capped at 5 MiB; normalized output at 10,000 unique endpoints.
+  Rejected, duplicate and omitted records are counted. The Nodes page manually paginates all returned endpoints.
+  `isLivePeer` requires a fresh outbound `getpeerinfo` entry for the exact normalized IP and port;
+  inbound connections do not verify a remote listening port. One RPC snapshot supplies height and
+  version. Missing heights stay null; connection counts are never substituted for the remote node's
+  peer count. Version fields identify their source. Crawler hashes and heights remain discovery metadata
+  and are never combined with peer heights to assert a chain hash match. A failed RPC refresh withdraws
+  direct-peer claims; the browser also expires them after 180 seconds or a failed API refresh.
+  `meta.portFailureEvidence` is `unavailable`: peer absence, uptime and last-seen age cannot identify
+  PORT_REFUSED / PORT_TIMEOUT, consecutive failed attempts, or agreement between independent failure
+  measurements. Unknown reachability has a neutral badge and no operator-action cue. This adapter
+  introduces no active port probes, scheduled collector or configuration change.
 - `GET /api/network/chain-health`, `GET /api/network/ops-status`
 - `GET /api/v1/node-inventory`, `GET /api/v1/node-inventory/versions`
 

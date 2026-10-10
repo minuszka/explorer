@@ -1,5 +1,6 @@
-import { useMemo } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import type { DnsSeederNodesApiResponse } from '@defcon/shared';
 import { HiOutlineArrowPath, HiOutlineSignal } from 'react-icons/hi2';
 import { fetchDnsSeederNodes, fetchPreReleaseNodes, fetchSeedNodes } from '../services/api';
 import type { DnsSeederNodeView, PreReleaseNodeView, SeedChainStatus, SeedNodeStatus } from '../types/api';
@@ -107,15 +108,9 @@ function directNodeAvailabilityBadge(status: string | null | undefined, checkedA
   return <span className="badge success">ONLINE</span>;
 }
 
-function snapshotAvailabilityBadge(lastSeen: string | null | undefined): React.ReactNode {
-  const seenMs = lastSeen ? Date.parse(lastSeen) : NaN;
-  const stale = isStaleTimestamp(seenMs, 15 * 60_000);
-  return <span className={`badge ${stale ? 'warning' : ''}`}>{stale ? 'STALE SNAPSHOT' : 'SNAPSHOT'}</span>;
-}
-
 function dnsSeederAvailabilityBadge(node: DnsSeederNodeView): React.ReactNode {
   if (node.isLivePeer) return <span className="badge success">LIVE PEER</span>;
-  return snapshotAvailabilityBadge(node.lastSeen);
+  return <span className="badge">REACHABILITY UNKNOWN</span>;
 }
 
 function getSeedReference(seedRows: SeedNodeStatus[] | undefined): ChainReference | null {
@@ -177,6 +172,9 @@ function deriveLivePeerComparison(
 
 export default function NetworkHealthPage() {
   const isPageVisible = usePageVisibility();
+  const [clock, setClock] = useState(Date.now);
+  const [dnsSeederPage, setDnsSeederPage] = useState(1);
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 30_000); return () => clearInterval(timer); }, []);
 
   const {
     data: seedData,
@@ -207,7 +205,7 @@ export default function NetworkHealthPage() {
     isLoading: dnsSeederLoading,
     error: dnsSeederError,
     dataUpdatedAt: dnsSeederUpdatedAt,
-  } = useQuery<DnsSeederNodeView[]>({
+  } = useQuery<DnsSeederNodesApiResponse>({
     queryKey: ['network-dns-seeder-nodes'],
     queryFn: fetchDnsSeederNodes,
     staleTime: 55_000,
@@ -229,10 +227,15 @@ export default function NetworkHealthPage() {
       .slice(0, 50);
   }, [preReleaseData]);
 
-  const dnsSeederRows = useMemo(() => {
-    if (!dnsSeederData) return [];
-    return dnsSeederData
+  const peerObservedMs = Date.parse(dnsSeederData?.meta.daemonPeers.observedAt ?? '');
+  const peerAge = Math.max(clock, Date.now()) - peerObservedMs;
+  const freshPeers = !dnsSeederError && dnsSeederData?.meta.daemonPeers.status === 'ok'
+    && peerAge >= -1000 && peerAge <= 180_000;
+  const dnsSeederAllRows = useMemo(() => {
+    if (!dnsSeederData || dnsSeederError) return [];
+    return dnsSeederData.data
       .slice()
+      .map(node => ({ ...node, isLivePeer: node.isLivePeer && freshPeers }))
       .sort((a, b) => {
         if (Boolean(a.isLivePeer) !== Boolean(b.isLivePeer)) {
           return a.isLivePeer ? -1 : 1;
@@ -240,9 +243,12 @@ export default function NetworkHealthPage() {
         const aHeight = typeof a.blockHeight === 'number' ? a.blockHeight : a.snapshotBlockHeight ?? -1;
         const bHeight = typeof b.blockHeight === 'number' ? b.blockHeight : b.snapshotBlockHeight ?? -1;
         return bHeight - aHeight;
-      })
-      .slice(0, 25);
-  }, [dnsSeederData]);
+      });
+  }, [dnsSeederData, dnsSeederError, freshPeers]);
+  const dnsSeederPages = Math.max(1, Math.ceil(dnsSeederAllRows.length / 25));
+  const currentDnsSeederPage = Math.min(dnsSeederPage, dnsSeederPages);
+  const dnsSeederRows = dnsSeederAllRows.slice((currentDnsSeederPage - 1) * 25, currentDnsSeederPage * 25);
+  const livePeerCount = dnsSeederAllRows.filter(node => node.isLivePeer).length;
 
   const seedReference = useMemo(() => getSeedReference(seedData), [seedData]);
 
@@ -253,7 +259,7 @@ export default function NetworkHealthPage() {
           <HiOutlineSignal />
           Nodes
         </h1>
-        <p className="page-subtitle">Hardcoded seed baseline, monitored test nodes, and hash-verified DNS snapshots</p>
+        <p className="page-subtitle">Seed baseline, monitored test nodes, and DNS discovery with direct peer observations</p>
       </div>
 
       <>
@@ -473,18 +479,35 @@ export default function NetworkHealthPage() {
             )}
           </div>
 
-          <div className="card" style={{ marginBottom: '1.5rem' }}>
+          <div className="card dns-seeder-card" style={{ marginBottom: '1.5rem' }}>
             <div className="card-header">
               <div>
                 <h2 className="card-title">DNS-Seeder</h2>
                 <p className="text-muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8rem' }}>
-                  Direct peers are live-verified. Other rows are discovery snapshots and are never used to infer chain health.
+                  Live peers match an outbound connection to the exact IP and port. Other endpoints have unknown reachability.
                 </p>
               </div>
-              <span className="badge badge-accent">
-                {dnsSeederRows.filter((node) => node.isLivePeer).length} live peer{dnsSeederRows.filter((node) => node.isLivePeer).length === 1 ? '' : 's'}
+              <span className="badge">
+                {livePeerCount} live peer{livePeerCount === 1 ? '' : 's'}
               </span>
             </div>
+            {dnsSeederData && !dnsSeederError && <div style={{ padding: '0 1.25rem 1rem' }}>
+              <p className="text-muted" style={{ fontSize: '0.8rem' }}>
+                Port-failure diagnosis unavailable: no classified errors or consecutive failed-attempt counts.
+                Missing peers and older last-seen times do not establish a port failure.
+              </p>
+              <details>
+                <summary>Source times and coverage</summary>
+                <p>DNS seeder: {dnsSeederData.meta.dnsSeeder.status}. Retrieved: {dnsSeederData.meta.dnsSeeder.fetchedAt ?? 'unavailable'}.
+                  {' '}Last fetch attempt: {dnsSeederData.meta.dnsSeeder.lastAttemptAt ?? 'none'}.
+                  {' '}Crawler snapshot time and feed completeness: unknown.</p>
+                <p>Explorer daemon peers: {freshPeers ? 'ok' : dnsSeederData.meta.daemonPeers.status === 'ok' ? 'expired' : dnsSeederData.meta.daemonPeers.status}.
+                  {' '}Observed: {dnsSeederData.meta.daemonPeers.observedAt ?? 'unavailable'}.</p>
+                <p>{dnsSeederData.meta.dnsSeeder.returnedRows} endpoints returned from {dnsSeederData.meta.dnsSeeder.receivedRows} feed records;
+                  {' '}{dnsSeederData.meta.dnsSeeder.rejectedRows} invalid, {dnsSeederData.meta.dnsSeeder.duplicateRows} duplicate,
+                  {' '}{dnsSeederData.meta.dnsSeeder.omittedRows} omitted by the {dnsSeederData.meta.dnsSeeder.limit.toLocaleString()}-endpoint limit.</p>
+              </details>
+            </div>}
             {dnsSeederLoading ? (
               <div className="placeholder-content" style={{ padding: '1.25rem' }}>
                 <p className="text-muted">Loading DNS seeder snapshot...</p>
@@ -509,13 +532,13 @@ export default function NetworkHealthPage() {
                   <thead>
                     <tr>
                       <th>Node</th>
-                      <th>Source</th>
+                      <th>Reachability</th>
                       <th>Chain status</th>
                       <th>Height</th>
-                      <th>Hash</th>
-                      <th>Connections</th>
+                      <th>Snapshot hash</th>
+                      <th>2h uptime</th>
                       <th>Version</th>
-                      <th>Checked</th>
+                      <th>Source time</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -529,13 +552,14 @@ export default function NetworkHealthPage() {
                           ? `protocol ${node.protocolVersion}`
                           : '-';
                       const chain = node.isLivePeer
-                        ? deriveLivePeerComparison(node.blockHeight, node.bestBlockHash, seedReference)
+                        ? deriveLivePeerComparison(node.blockHeight, null, seedReference)
                         : { status: 'not-comparable' as const };
                       const displayedHeight = node.isLivePeer ? node.blockHeight : node.snapshotBlockHeight;
                       return (
                         <tr key={`${node.ip}:${node.port}`}>
                           <td>
                             <code>{node.ip}</code>
+                            <div className="text-muted" style={{ fontSize: '0.75rem' }}>Port {node.port}</div>
                           </td>
                           <td>{dnsSeederAvailabilityBadge(node)}</td>
                           <td>
@@ -554,13 +578,14 @@ export default function NetworkHealthPage() {
                             </code>
                           </td>
                           <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                            {typeof node.peerCount === 'number' ? node.peerCount.toLocaleString() : '-'}
+                            {typeof node.uptime2h === 'number' ? `${node.uptime2h.toLocaleString()}%` : '-'}
                           </td>
                           <td>
-                            <code style={{ fontSize: '0.72rem' }}>{walletVersionLabel}</code>
+                            <code style={{ fontSize: '0.72rem' }} title={`Version source: ${node.walletVersion ? node.walletVersionSource : node.protocolVersionSource ?? 'unknown'}`}>{walletVersionLabel}</code>
                           </td>
                           <td style={{ fontSize: '0.75rem', color: 'var(--text-subtle)', whiteSpace: 'nowrap' }}>
                             {checkedLabel}
+                            <div>{node.isLivePeer ? 'Daemon peer' : 'Seeder last seen'}</div>
                           </td>
                         </tr>
                       );
@@ -570,9 +595,15 @@ export default function NetworkHealthPage() {
               </div>
             ) : (
               <div className="placeholder-content" style={{ padding: '1.25rem' }}>
-                <p className="text-muted">No DNS seeder records are available.</p>
+                <p className="text-muted">{dnsSeederData?.meta.dnsSeeder.status === 'disabled'
+                  ? 'DNS seeder feed is disabled.' : 'No DNS seeder records are available.'}</p>
               </div>
             )}
+            {dnsSeederAllRows.length > 0 && <nav aria-label="DNS seeder pages" style={{ padding: '1rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
+              <button type="button" onClick={() => setDnsSeederPage(currentDnsSeederPage - 1)} disabled={currentDnsSeederPage === 1}>Previous endpoints</button>
+              <span>Page {currentDnsSeederPage} of {dnsSeederPages} · {dnsSeederAllRows.length} endpoints</span>
+              <button type="button" onClick={() => setDnsSeederPage(currentDnsSeederPage + 1)} disabled={currentDnsSeederPage === dnsSeederPages}>Next endpoints</button>
+            </nav>}
           </div>
       </>
 

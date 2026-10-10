@@ -2,6 +2,8 @@ export * from './types';
 export * from './constants';
 export { banAttributionApiResponseSchema } from './contracts/banAttribution';
 export { poseObservedEventsApiResponseSchema } from './contracts/poseTelemetry';
+export { dnsSeederNodesApiResponseSchema } from './contracts/dnsSeeder';
+export type { DnsSeederNodeContract, DnsSeederNodesApiResponse } from './contracts/dnsSeeder';
 export type {
   ActiveMasternodeVersionsContract,
   SearchApiResponse,

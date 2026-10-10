@@ -2,6 +2,7 @@ import { Router, Request, Response } from 'express';
 import { isIP } from 'node:net';
 import axios from 'axios';
 import { rpcService } from '../services/rpc.service';
+import { dnsSeederNodesService } from '../services/dnsSeederNodes.service';
 import { networkHealthService } from '../services/networkHealth.service';
 import { seedNodeService } from '../services/seedNode.service';
 import { realtimeService } from '../services/realtime.service';
@@ -19,16 +20,12 @@ const NETWORK_TTL_MS = Math.max(1000, Math.min(10_000, config.cache.ttlSeconds *
 const OPS_STATUS_TTL_MS = Math.max(1000, Math.min(8_000, config.cache.ttlSeconds * 1000));
 const NETWORK_STALE_MAX_AGE_MS = 2 * 60_000;
 const OPS_STATUS_STALE_MAX_AGE_MS = 2 * 60_000;
-const DNS_SEEDER_TIMEOUT_MS = config.nodeInventory.requestTimeoutMs;
-const DNS_SEEDER_FAILURE_BACKOFF_MS = config.nodeInventory.failureBackoffMs;
-const DNS_SEEDER_STALE_MAX_AGE_MS = config.nodeInventory.staleMaxAgeMs;
 const PRE_RELEASE_NODES_TIMEOUT_MS = config.nodeInventory.requestTimeoutMs;
 const PRE_RELEASE_NODES_FAILURE_BACKOFF_MS = config.nodeInventory.failureBackoffMs;
 const PRE_RELEASE_NODES_STALE_MAX_AGE_MS = config.nodeInventory.staleMaxAgeMs;
 // These monitored full nodes are also compiled into the Core static fallback
 // seed set. Keep the Explorer marker aligned with src/chainparamsseeds.h.
 const CORE_STATIC_FALLBACK_SEED_IPS = new Set(['178.18.247.92', '178.18.252.84', '194.163.130.132']);
-const LOCAL_PEER_META_TTL_MS = 30_000;
 const geoCache = new Map<string, { countryCode: string; countryName: string }>();
 let networkCache:
   | {
@@ -66,42 +63,6 @@ export function invalidateNetworkCache(): void {
   networkInFlight = null;
 }
 
-let dnsSeederCache:
-  | {
-      atMs: number;
-      payload: {
-        success: true;
-        data: Array<{
-          ip: string;
-          port: number;
-          blockHeight: number | null;
-          bestBlockHash: string | null;
-          uptime2h: number | null;
-          lastSeen: string | null;
-          walletVersion: string | null;
-          protocolVersion: number | null;
-          peerCount: number | null;
-        }>;
-      };
-    }
-  | null = null;
-let dnsSeederInFlight:
-  | Promise<{
-      success: true;
-      data: Array<{
-        ip: string;
-        port: number;
-        blockHeight: number | null;
-        bestBlockHash: string | null;
-        uptime2h: number | null;
-        lastSeen: string | null;
-        walletVersion: string | null;
-        protocolVersion: number | null;
-        peerCount: number | null;
-      }>;
-    }>
-  | null = null;
-let dnsSeederLastFailureAtMs = 0;
 let preReleaseNodesCache:
   | {
       atMs: number;
@@ -146,16 +107,6 @@ let preReleaseNodesInFlight:
 let preReleaseNodesLastFailureAtMs = 0;
 let opsStatusCache: { atMs: number; payload: { success: true; data: Record<string, unknown> } } | null = null;
 let opsStatusInFlight: Promise<{ success: true; data: Record<string, unknown> }> | null = null;
-let localPeerMetaCache:
-  | {
-      atMs: number;
-      map: Map<string, { peerCount: number; walletVersion: string | null; protocolVersion: number | null }>;
-    }
-  | null = null;
-let localPeerMetaInFlight:
-  | Promise<Map<string, { peerCount: number; walletVersion: string | null; protocolVersion: number | null }>>
-  | null = null;
-
 type RpcNetworkInfo = {
   connections?: number;
   protocolversion?: number;
@@ -295,46 +246,6 @@ function resolveCountry(host: string, isTor: boolean): { countryCode: string; co
   setGeoCache(host, resolved);
 
   return resolved;
-}
-
-async function getLocalPeerMeta(): Promise<
-  Map<string, { peerCount: number; walletVersion: string | null; protocolVersion: number | null }>
-> {
-  const now = Date.now();
-  if (localPeerMetaCache && now - localPeerMetaCache.atMs < LOCAL_PEER_META_TTL_MS) {
-    return localPeerMetaCache.map;
-  }
-  if (localPeerMetaInFlight) {
-    return localPeerMetaInFlight;
-  }
-
-  localPeerMetaInFlight = (async () => {
-    const map = new Map<string, { peerCount: number; walletVersion: string | null; protocolVersion: number | null }>();
-    const localPeers = (await rpcService.getPeerInfo()) as RpcPeerInfo[];
-    for (const peer of localPeers || []) {
-      const { host } = parsePeerAddress(peer.addr);
-      if (!host || isIP(host) === 0) continue;
-      const current = map.get(host) || { peerCount: 0, walletVersion: null, protocolVersion: null };
-      current.peerCount += 1;
-      const subver = normalizeWalletVersionLabel(peer.subver);
-      if (!current.walletVersion && subver) {
-        current.walletVersion = subver;
-      }
-      const protocolVersion = parseNonNegativeInt(peer.version);
-      if (current.protocolVersion == null && protocolVersion != null) {
-        current.protocolVersion = protocolVersion;
-      }
-      map.set(host, current);
-    }
-    localPeerMetaCache = { atMs: Date.now(), map };
-    return map;
-  })();
-
-  try {
-    return await localPeerMetaInFlight;
-  } finally {
-    localPeerMetaInFlight = null;
-  }
 }
 
 // GET /api/network - Network info + peers
@@ -553,159 +464,11 @@ router.get('/seed-nodes', withCachePolicy('no-store'), (_req: Request, res: Resp
   return res.json({ success: true, data: seedNodeService.getReport() });
 });
 
-// GET /api/network/dns-seeder-nodes - External DNS seeder discovery records with live-peer enrichment.
-// The route has its own small in-process cache, but response caching must stay disabled:
-// stale empty snapshots are worse than a short additional fetch for this monitoring panel.
+// GET /api/network/dns-seeder-nodes - Existing feed and exact outbound peer observations.
 router.get('/dns-seeder-nodes', withCachePolicy('no-store'), async (_req: Request, res: Response) => {
-  const feedUrl = config.nodeInventory.dnsSeederApiUrl;
-  // An unset DNS_SEEDER_API_URL disables the feed: answer with an empty
-  // snapshot, without an upstream request or a log entry.
-  if (!feedUrl) {
-    return res.json({ success: true, data: [] });
-  }
-
   try {
-    const now = Date.now();
-    if (dnsSeederCache && now - dnsSeederCache.atMs < NETWORK_TTL_MS) {
-      return res.json(dnsSeederCache.payload);
-    }
-    const inBackoffWindow = dnsSeederLastFailureAtMs > 0 && now - dnsSeederLastFailureAtMs < DNS_SEEDER_FAILURE_BACKOFF_MS;
-    const canServeStale =
-      dnsSeederCache != null && now - dnsSeederCache.atMs < DNS_SEEDER_STALE_MAX_AGE_MS;
-    if (inBackoffWindow && canServeStale && dnsSeederCache) {
-      return res.json(dnsSeederCache.payload);
-    }
-
-    if (!dnsSeederInFlight) {
-      dnsSeederInFlight = (async () => {
-        const response = await axios.get(feedUrl, { timeout: DNS_SEEDER_TIMEOUT_MS });
-        const rowsRaw: unknown = response?.data;
-        const rows = Array.isArray(rowsRaw)
-          ? rowsRaw
-          : Array.isArray((rowsRaw as { data?: unknown[] })?.data)
-            ? ((rowsRaw as { data?: unknown[] }).data as unknown[])
-            : Array.isArray((rowsRaw as { nodes?: unknown[] })?.nodes)
-              ? ((rowsRaw as { nodes?: unknown[] }).nodes as unknown[])
-              : [];
-
-        let localPeerMeta = new Map<string, { peerCount: number; walletVersion: string | null; protocolVersion: number | null }>();
-        try {
-          localPeerMeta = await getLocalPeerMeta();
-        } catch (error) {
-          logger.debug('Could not fetch local peer metadata for DNS seeder nodes:', error);
-        }
-
-        let livePeerHeightByIp = new Map<string, number>();
-        let livePeerObservedAt: string | null = null;
-        try {
-          const peers = (await rpcService.getPeerInfo()) as RpcPeerInfo[];
-          livePeerObservedAt = new Date().toISOString();
-          for (const peer of peers || []) {
-            const { host } = parsePeerAddress(peer.addr);
-            if (!host || isIP(host) === 0) continue;
-            const liveHeight = Math.max(peer.synced_headers ?? 0, peer.synced_blocks ?? 0);
-            const current = livePeerHeightByIp.get(host) ?? -1;
-            if (liveHeight > current) {
-              livePeerHeightByIp.set(host, liveHeight);
-            }
-          }
-        } catch (error) {
-          logger.debug('Could not fetch live peer heights for DNS seeder nodes:', error);
-          livePeerHeightByIp = new Map<string, number>();
-        }
-
-        const normalized = rows
-          .map((item) => {
-            const row = item as Record<string, unknown>;
-            const ip = String(row.ip || '').trim();
-            const port = Number.parseInt(String(row.port ?? ''), 10);
-            const uptime2hParsed = Number.parseFloat(String(row.uptime_2h ?? row.uptime2h ?? '').replace('%', ''));
-            const rowWalletVersion = normalizeWalletVersionLabel(
-              row.version ??
-                row.wallet_version ??
-                row.walletVersion ??
-                row.subver ??
-                row.user_agent ??
-                row.userAgent ??
-                row.agent ??
-                row.version_string ??
-                row.versionString
-            );
-            const rowProtocolVersion = parseNonNegativeInt(
-              row.protocol_version ?? row.protocolVersion ?? row.protocol ?? row.proto
-            );
-            const rowPeerCount = parseNonNegativeInt(row.peer_count ?? row.peerCount ?? row.peers ?? row.connections);
-            const snapshotBlockHeight = parseNonNegativeInt(row.block_height ?? row.blockHeight ?? row.height ?? row.blocks);
-            const rowBestBlockHash = normalizeBlockHash(
-              row.bestBlockHash ??
-                row.best_block_hash ??
-                row.blockHash ??
-                row.block_hash ??
-                row.hash ??
-                null
-            );
-            const lastSeenRaw = row.last_seen ?? row.lastSeen;
-            const lastSeenIso =
-              typeof lastSeenRaw === 'string' && lastSeenRaw.trim()
-                ? lastSeenRaw
-                : typeof lastSeenRaw === 'number' && Number.isFinite(lastSeenRaw)
-                  ? new Date(lastSeenRaw * 1000).toISOString()
-                  : null;
-            const localMeta = localPeerMeta.get(ip);
-            const walletVersion = rowWalletVersion ?? localMeta?.walletVersion ?? null;
-            const protocolVersion = rowProtocolVersion ?? localMeta?.protocolVersion ?? null;
-            const peerCount = rowPeerCount ?? localMeta?.peerCount ?? null;
-
-            if (!ip || isIP(ip) === 0 || !Number.isFinite(port) || port <= 0 || port > 65535) {
-              return null;
-            }
-
-            // The crawler's height is retained only as discovery metadata. Chain
-            // comparisons use a height observed from a direct local peer; never
-            // infer a remote hash from the Explorer's own chain tip.
-            const isLivePeer = livePeerHeightByIp.has(ip);
-            const blockHeight = isLivePeer ? livePeerHeightByIp.get(ip)! : null;
-            const bestBlockHash = rowBestBlockHash;
-
-            return {
-              ip,
-              port,
-              blockHeight,
-              snapshotBlockHeight,
-              bestBlockHash,
-              isLivePeer,
-              livePeerObservedAt: isLivePeer ? livePeerObservedAt : null,
-              uptime2h: Number.isFinite(uptime2hParsed) ? uptime2hParsed : null,
-              lastSeen: lastSeenIso,
-              walletVersion,
-              protocolVersion,
-              peerCount,
-            };
-          })
-          .filter((row): row is NonNullable<typeof row> => Boolean(row))
-          .slice(0, 100);
-
-        return { success: true as const, data: normalized };
-      })();
-    }
-
-    const activeInFlight = dnsSeederInFlight;
-    try {
-      const payload = await activeInFlight;
-      dnsSeederLastFailureAtMs = 0;
-      dnsSeederCache = { atMs: Date.now(), payload };
-      return res.json(payload);
-    } finally {
-      if (dnsSeederInFlight === activeInFlight) {
-        dnsSeederInFlight = null;
-      }
-    }
+    return res.json(await dnsSeederNodesService.getSnapshot());
   } catch (error) {
-    dnsSeederLastFailureAtMs = Date.now();
-    if (dnsSeederCache && Date.now() - dnsSeederCache.atMs < DNS_SEEDER_STALE_MAX_AGE_MS) {
-      return res.json(dnsSeederCache.payload);
-    }
-    logger.debug('Could not fetch external DNS seeder nodes:', error);
     return sendServiceUnavailable(res, 'Could not fetch DNS seeder nodes', error);
   }
 });

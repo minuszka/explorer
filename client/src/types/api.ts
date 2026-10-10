@@ -418,23 +418,7 @@ export interface SeedNodeStatus {
   error?: string;
 }
 
-export interface DnsSeederNodeView {
-  ip: string;
-  port: number;
-  /** Height observed from a direct Explorer peer; null for snapshot-only rows. */
-  blockHeight: number | null;
-  /** Discovery-only height reported by the external DNS seeder crawler. */
-  snapshotBlockHeight?: number | null;
-  bestBlockHash?: string | null;
-  /** True only when the Explorer is currently connected to this exact IP. */
-  isLivePeer?: boolean;
-  livePeerObservedAt?: string | null;
-  uptime2h: number | null;
-  lastSeen: string | null;
-  walletVersion?: string | null;
-  protocolVersion?: number | null;
-  peerCount?: number | null;
-}
+export type DnsSeederNodeView = import('@defcon/shared').DnsSeederNodeContract;
 
 export interface PreReleaseNodeView {
   ip: string;
