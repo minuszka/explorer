@@ -198,8 +198,9 @@ old PoSe scores, or explain why a DKG member was invalid. `membership_unavailabl
 and `unsupported_payload` remain `unknown`; decoded `memberSlots`/`invalidSlots`
 are bitset sizes, not counts of actual masternodes. Null commitments have no
 participants. Observer counts use exact block/height/type/base/member matches
-from unexpired, non-future penalty, ban or DKG observations and deduplicate node
-IDs. Those observations retain their separate unverified evidence status.
+from unexpired penalty, ban or DKG observations whose event and report times are
+not in the future, and deduplicate node IDs. BANNED_BY uses the same time filter.
+Those observations retain their separate unverified evidence status.
 
 With the separately enabled historical scoring stage, `penaltyCoverage` reports
 verified, pending, unavailable, unsupported and inconsistent commitment blocks

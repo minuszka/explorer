@@ -5,6 +5,9 @@ import { config } from '../src/config';
 import { PoseChainBlock } from '../src/models/PoseChainBlock';
 import { PoseChainState } from '../src/models/PoseChainState';
 import { PoseObservation } from '../src/models/PoseObservation';
+import { NetworkNoiseNodeState } from '../src/models/NetworkNoiseNodeState';
+import { NetworkNoiseObservation } from '../src/models/NetworkNoiseObservation';
+import { networkNoiseService } from '../src/services/networkNoise.service';
 import { PoseChainService } from '../src/services/poseChain.service';
 import { getPoseChainData } from '../src/services/poseChainQuery.service';
 import { getBanAttribution } from '../src/services/banAttribution.service';
@@ -32,7 +35,7 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
     }
     // Different database from the telemetry suite, which can run concurrently.
     await mongoose.connect(`${baseUri}c1`, { serverSelectionTimeoutMS: 5000 });
-    await Promise.all([PoseChainBlock.init(), PoseChainState.init(), PoseObservation.init()]);
+    await Promise.all([PoseChainBlock.init(), PoseChainState.init(), PoseObservation.init(), NetworkNoiseNodeState.init(), NetworkNoiseObservation.init()]);
   });
   afterAll(async () => {
     Object.assign(config.poseChain, originalConfig);
@@ -49,7 +52,7 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
     };
   }
   beforeEach(async () => {
-    await Promise.all([PoseChainBlock.deleteMany({}), PoseChainState.deleteMany({}), PoseObservation.deleteMany({})]);
+    await Promise.all([PoseChainBlock.deleteMany({}), PoseChainState.deleteMany({}), PoseObservation.deleteMany({}), NetworkNoiseNodeState.deleteMany({}), NetworkNoiseObservation.deleteMany({})]);
     Object.assign(config.poseChain, { enabled: true, startHeight: 100, blocksPerRun: 10,
       confirmations: 1, reorgMaxDepth: 5, membershipRetryBlocks: 5, attributionEnabled: false, attributionBlocksPerRun: 5 });
     blocks = new Map(); tip = 102; failMembership = false; hook = undefined;
@@ -104,6 +107,40 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
     expect(data.coverage.lastReorgAt).not.toBeNull();
     expect(data.commitments[0].observerCount).toBe(0);
     expect(await PoseObservation.countDocuments()).toBe(1);
+  });
+
+  it('replays mixed v1/v2 reports across a reorg and stale coverage', async () => {
+    await service.collectOnce();
+    const now = Date.now();
+    const recent = new Date(now - 1000).toISOString();
+    const event = poseEvent({ eventAt: recent, eventBlockHash: chainHash(102), eventBlockHeight: 102,
+      quorumType: 7, quorumHash: chainHash(1002), proTxHash: chainHash(2) });
+    const newer = posePayload({ nodeId: 'mixed-a', observedAt: recent, sequence: 12, poseEvents: [event] });
+    const { poseEvents: _events, ...common } = newer;
+    const legacy = { ...common, schemaVersion: 1 as const, sequence: 11,
+      signals: [{ type: 'mixed_signal', fingerprint: 'mixed-fingerprint', count: 1,
+        firstSeenAt: recent, lastSeenAt: recent }] };
+    expect((await networkNoiseService.ingest(legacy)).duplicate).toBe(false);
+    expect((await networkNoiseService.ingest(newer)).acceptedPoseObservations).toBe(1);
+    expect((await networkNoiseService.ingest(newer)).duplicate).toBe(true);
+    expect((await networkNoiseService.ingest({ ...newer, sequence: 13 })).acceptedPoseObservations).toBe(0);
+    expect((await networkNoiseService.ingest({ ...newer, nodeId: 'mixed-b' })).acceptedPoseObservations).toBe(1);
+    expect(await NetworkNoiseObservation.countDocuments()).toBe(1);
+    expect(await PoseObservation.countDocuments()).toBe(2);
+    expect((await getPoseChainData(query())).commitments.find((entry) => entry.blockHeight === 102))
+      .toMatchObject({ blockHash: chainHash(102), observerCount: 2 });
+
+    await PoseChainState.updateOne({}, { $set: { checkedAt: new Date(0) } });
+    expect(await getPoseChainData(query())).toMatchObject({ status: 'stale', total: 0, commitments: [] });
+    blocks.set(101, block(101, 1)); blocks.set(102, block(102, 1));
+    await service.collectOnce();
+    const after = await getPoseChainData(query());
+    expect(after.status).toBe('ready');
+    expect(after.commitments.find((entry) => entry.blockHeight === 102))
+      .toMatchObject({ blockHash: chainHash(1102), observerCount: 0 });
+    const observations = await poseTelemetryService.getEvents({ hours: 24, page: 1, limit: 50 });
+    expect(observations.events[0]).toMatchObject({ observerCount: 2, canonicalStatus: 'unverified' });
+    expect(await PoseChainBlock.countDocuments({ canonical: false })).toBe(2);
   });
 
   it('fails closed on deep reorg, and can recover after increasing the allowed depth', async () => {
@@ -210,12 +247,18 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
       { eventAt: new Date(Date.now() + 60000).toISOString() }].entries()) {
       await poseTelemetryService.ingest(posePayload({ nodeId: `wrong-${i}`, poseEvents: [{ ...event, ...overrides }] }));
     }
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'future-report',
+      observedAt: new Date(Date.now() + 3600000).toISOString(), poseEvents: [event] }));
     const data = await getPoseChainData(query({ limit: 1, proTxHash: chainHash(2), quorumType: 7 }));
     expect(data).toMatchObject({ total: 3, commitments: [{ observerCount: 12, invalidMemberCount: 1 }] });
     expect(data.commitments[0].members[1].observerCount).toBe(12);
     expect((await getPoseChainData(query({ page: 2, limit: 1 }))).commitments[0].blockHeight).toBe(101);
     expect((await getPoseChainData(query({ quorumType: 2 }))).total).toBe(0);
-    expect(await PoseObservation.countDocuments()).toBe(19);
+    expect(await PoseObservation.countDocuments()).toBe(20);
+    await PoseObservation.updateOne({ nodeId: 'future-report' }, { $set: { observedAt: new Date(Date.now() - 1000) } });
+    const recovered = await getPoseChainData(query({ limit: 1, proTxHash: chainHash(2), quorumType: 7 }));
+    expect(recovered.commitments[0]).toMatchObject({ observerCount: 13 });
+    expect(recovered.commitments[0].members[1].observerCount).toBe(13);
   });
 
   it('does not serve attribution when disabled, stale, collecting or errored', async () => {
@@ -515,12 +558,17 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
       nodeId: `wrong-ban-observer-${i}`, poseEvents: [{ ...event, ...variations[i] }] }));
     await poseTelemetryService.ingest(posePayload({ nodeId: 'expired-ban-observer', poseEvents: [event] }));
     await PoseObservation.updateMany({ nodeId: 'expired-ban-observer' }, { $set: { expiresAt: new Date(Date.now() - 1) } });
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'future-ban-observer',
+      observedAt: new Date(Date.now() + 3600000).toISOString(), poseEvents: [event] }));
     const countsBefore = await PoseChainBlock.countDocuments();
     const ban = await getBanAttribution({ proTxHash: chainHash(2), banHeight: 100 });
     expect(ban).toMatchObject({ status: 'verified', coverage: { caughtUp: false, confirmedThroughHeight: 100 },
       proof: { txid: commitment.txid, quorumType: 7, observerCount: 12 } });
     expect(banAttributionDataSchema.safeParse(ban).success).toBe(true);
     expect(await PoseChainBlock.countDocuments()).toBe(countsBefore);
+    await PoseObservation.updateOne({ nodeId: 'future-ban-observer' }, { $set: { observedAt: new Date(Date.now() - 1000) } });
+    expect(await getBanAttribution({ proTxHash: chainHash(2), banHeight: 100 }))
+      .toMatchObject({ status: 'verified', proof: { observerCount: 13 } });
     expect(await getBanAttribution({ proTxHash: chainHash(1), banHeight: 100 })).toMatchObject({
       status: 'unknown', reason: 'ban_not_attributed', proof: null });
     expect(await getBanAttribution({ proTxHash: chainHash(2), banHeight: 101 })).toMatchObject({

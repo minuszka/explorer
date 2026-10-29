@@ -113,7 +113,7 @@ export async function getPoseChainData(query: PoseChainQuery): Promise<PoseChain
     _id: { blockHash: string; height: number; quorumType: number; quorumHash: string; proTxHash: string };
     nodeIds: string[];
   }>([
-    { $match: { $or: anchors, expiresAt: { $gt: now }, eventAt: { $lte: now },
+    { $match: { $or: anchors, expiresAt: { $gt: now }, eventAt: { $lte: now }, observedAt: { $lte: now },
       kind: { $in: ['penalty_change', 'ban', 'dkg_member'] } } },
     { $group: { _id: { blockHash: '$eventBlockHash', height: '$eventBlockHeight', quorumType: '$quorumType',
       quorumHash: '$quorumHash', proTxHash: '$proTxHash' }, nodeIds: { $addToSet: '$nodeId' } } },

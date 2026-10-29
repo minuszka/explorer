@@ -51,7 +51,8 @@ export async function getBanAttribution(query: BanAttributionQuery): Promise<Ban
       const observers = await PoseObservation.distinct('nodeId', {
         eventBlockHash: proof.blockHash, eventBlockHeight: proof.blockHeight,
         quorumType: proof.quorumType, quorumHash: proof.quorumHash, proTxHash: query.proTxHash,
-        expiresAt: { $gt: now }, eventAt: { $lte: now }, kind: { $in: ['penalty_change', 'ban', 'dkg_member'] },
+        expiresAt: { $gt: now }, eventAt: { $lte: now }, observedAt: { $lte: now },
+        kind: { $in: ['penalty_change', 'ban', 'dkg_member'] },
       }).maxTimeMS(10000);
       const name = proof.quorumType === 2 ? 'Q400_60' : proof.quorumType === 7 ? 'Q60/41' : `quorum type ${proof.quorumType}`;
       result = { ...common, status: 'verified', evidence: 'chain_verified_penalty', reason: null,
