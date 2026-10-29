@@ -85,6 +85,23 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(result.timeline.map((entry) => entry.signalType)).toEqual(['fresh_signal']);
   });
 
+  it('excludes future-dated reports from PoSe observer counts until their report time', async () => {
+    const now = Date.now();
+    const first = payload({ observedAt: new Date(now - 1000).toISOString() });
+    const future = new Date(now + 3600000).toISOString();
+    await poseTelemetryService.ingest(first);
+    await poseTelemetryService.ingest({ ...first, nodeId: 'future-node', observedAt: future });
+
+    const data = await poseTelemetryService.getEvents(query());
+    expect(data).toMatchObject({ total: 1, observationCount: 1, chainVerifiedEvents: 0 });
+    expect(data.events[0]).toMatchObject({ observerCount: 1, observationCount: 1,
+      observerNodeIds: [first.nodeId], lastReportedAt: first.observedAt, canonicalStatus: 'unverified' });
+    expect(await PoseObservation.countDocuments()).toBe(2);
+    await PoseObservation.updateOne({ nodeId: 'future-node' }, { $set: { observedAt: new Date(now - 500) } });
+    const recovered = await poseTelemetryService.getEvents(query());
+    expect(recovered.events[0]).toMatchObject({ observerCount: 2, observationCount: 2 });
+  });
+
   it('filters observations by the complete ban anchor without promoting log evidence', async () => {
     const first = payload();
     const event = first.poseEvents[0];

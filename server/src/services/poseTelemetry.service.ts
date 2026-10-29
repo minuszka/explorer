@@ -49,6 +49,7 @@ class PoseTelemetryService {
     const now = new Date();
     const match: Record<string, unknown> = {
       eventAt: { $gte: new Date(now.getTime() - query.hours * 3600000), $lte: now },
+      observedAt: { $lte: now },
       expiresAt: { $gt: now },
     };
     if (query.kind !== undefined) match.kind = query.kind;

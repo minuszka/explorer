@@ -246,9 +246,11 @@ than clamped: `hours` 1–8760 (default 24), `page` 1–10000 (default 1), `limi
 `eventBlockHash` and `quorumHash`. Block/quorum hashes normalize to lowercase;
 all supplied anchors must match exactly. Anchor matches remain unverified log
 claims, including when opened from a verified BANNED_BY panel. The window uses
-the source `eventAt`, excludes future events, and excludes expired records even
-before MongoDB's TTL cleanup. Pages sort by latest event time, then event key;
-they can move as new reports arrive.
+the source `eventAt`, excludes future events and future-dated batch `observedAt`
+values, and excludes expired records even before MongoDB's TTL cleanup. Future-dated
+reports remain stored and can appear once their report time has passed, if still
+within the event window and retention period. Pages sort by latest event time,
+then event key; they can move as new reports arrive.
 
 The response envelope is `{ "success": true, "data": ... }`. Data contains
 `generatedAt`, `windowHours`, configured `retentionDays`, pagination fields,
