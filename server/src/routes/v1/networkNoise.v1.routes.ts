@@ -11,6 +11,7 @@ import { config } from '../../config';
 import { withCachePolicy } from '../../middleware/cachePolicy';
 import { networkNoiseService } from '../../services/networkNoise.service';
 import { poseTelemetryService } from '../../services/poseTelemetry.service';
+import { NetworkNoiseSequenceConflict } from '../../services/networkNoiseBatch.service';
 import { resolveRequestIp } from '../../utils/requestIp';
 import {
   firstValidationIssueMessage,
@@ -71,6 +72,9 @@ router.post('/ingest', ingestLimiter, async (req: Request, res: Response) => {
       data: result,
     });
   } catch (error) {
+    if (error instanceof NetworkNoiseSequenceConflict) {
+      return res.status(409).json({ success: false, error: { code: 'SEQUENCE_CONFLICT', message: error.message } });
+    }
     return sendInternalError(res, 'Failed to ingest network noise telemetry', error);
   }
 });

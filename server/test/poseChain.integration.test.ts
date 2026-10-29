@@ -7,6 +7,7 @@ import { PoseChainState } from '../src/models/PoseChainState';
 import { PoseObservation } from '../src/models/PoseObservation';
 import { NetworkNoiseNodeState } from '../src/models/NetworkNoiseNodeState';
 import { NetworkNoiseObservation } from '../src/models/NetworkNoiseObservation';
+import { NetworkNoiseBaseline, NetworkNoiseBatch } from '../src/models/NetworkNoiseBatch';
 import { networkNoiseService } from '../src/services/networkNoise.service';
 import { PoseChainService } from '../src/services/poseChain.service';
 import { getPoseChainData } from '../src/services/poseChainQuery.service';
@@ -52,7 +53,7 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
     };
   }
   beforeEach(async () => {
-    await Promise.all([PoseChainBlock.deleteMany({}), PoseChainState.deleteMany({}), PoseObservation.deleteMany({}), NetworkNoiseNodeState.deleteMany({}), NetworkNoiseObservation.deleteMany({})]);
+    await Promise.all([PoseChainBlock.deleteMany({}), PoseChainState.deleteMany({}), PoseObservation.deleteMany({}), NetworkNoiseNodeState.deleteMany({}), NetworkNoiseObservation.deleteMany({}), NetworkNoiseBaseline.deleteMany({}), NetworkNoiseBatch.deleteMany({})]);
     Object.assign(config.poseChain, { enabled: true, startHeight: 100, blocksPerRun: 10,
       confirmations: 1, reorgMaxDepth: 5, membershipRetryBlocks: 5, attributionEnabled: false, attributionBlocksPerRun: 5 });
     blocks = new Map(); tip = 102; failMembership = false; hook = undefined;

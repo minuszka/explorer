@@ -4,6 +4,8 @@ import { poseObservedEventsApiResponseSchema, poseEventsQuerySchema } from '@def
 import { PoseObservation } from '../src/models/PoseObservation';
 import { NetworkNoiseNodeState } from '../src/models/NetworkNoiseNodeState';
 import { NetworkNoiseObservation } from '../src/models/NetworkNoiseObservation';
+import { NetworkNoiseBaseline, NetworkNoiseBatch } from '../src/models/NetworkNoiseBatch';
+import { NetworkNoiseSequenceConflict } from '../src/services/networkNoiseBatch.service';
 import { poseTelemetryService } from '../src/services/poseTelemetry.service';
 import { networkNoiseService } from '../src/services/networkNoise.service';
 import { poseEvent, posePayload } from './fixtures/poseTelemetry';
@@ -20,7 +22,7 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     await Promise.all([PoseObservation.init(), NetworkNoiseNodeState.init(), NetworkNoiseObservation.init()]);
   });
   beforeEach(async () => {
-    await Promise.all([PoseObservation.deleteMany({}), NetworkNoiseNodeState.deleteMany({}), NetworkNoiseObservation.deleteMany({})]);
+    await Promise.all([PoseObservation.deleteMany({}), NetworkNoiseNodeState.deleteMany({}), NetworkNoiseObservation.deleteMany({}), NetworkNoiseBaseline.deleteMany({}), NetworkNoiseBatch.deleteMany({})]);
   });
   afterAll(async () => {
     if (mongoose.connection.readyState === 1) await mongoose.connection.dropDatabase();
@@ -36,6 +38,102 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     });
   }
   const query = (overrides: Record<string, unknown> = {}) => poseEventsQuerySchema.parse(overrides);
+
+  it('recovers a missing lower batch without rewinding the node and rejects conflicting replays', async () => {
+    const event = poseEvent({ eventAt: new Date(Date.now() - 60000).toISOString() });
+    const first = payload({ sequence: 10, poseEvents: [] });
+    const newer = payload({ sequence: 12, snapshot: { ip: '198.51.100.41', blockHeight: 200 }, poseEvents: [] });
+    const late = payload({ sequence: 11, poseEvents: [event] });
+    await networkNoiseService.ingest(first);
+    await networkNoiseService.ingest(newer);
+    expect(await networkNoiseService.ingest(late)).toMatchObject({ duplicate: false, acceptedPoseObservations: 1 });
+    expect(await networkNoiseService.ingest(late)).toMatchObject({ duplicate: true, acceptedPoseObservations: 0 });
+    await expect(networkNoiseService.ingest({ ...late, poseEvents: [{ ...event, penalty: 146 }] }))
+      .rejects.toBeInstanceOf(NetworkNoiseSequenceConflict);
+    expect(await PoseObservation.countDocuments()).toBe(1);
+    expect(await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())
+      .toMatchObject({ lastSequence: 12, ip: '198.51.100.41', blockHeight: 200 });
+  });
+
+  it('keeps the legacy high-water mark conservative when the receipt history starts', async () => {
+    const first = payload({ sequence: 12 });
+    await NetworkNoiseNodeState.create({ nodeId: first.nodeId, lastSequence: 12,
+      ip: first.snapshot.ip, lastReportedAt: new Date(first.observedAt) });
+    expect((await networkNoiseService.ingest({ ...first, sequence: 11 })).duplicate).toBe(true);
+    expect((await networkNoiseService.ingest(first)).duplicate).toBe(true);
+    expect((await networkNoiseService.ingest({ ...first, sequence: 14 })).duplicate).toBe(false);
+    expect((await networkNoiseService.ingest({ ...first, sequence: 13 })).duplicate).toBe(false);
+    expect((await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())?.lastSequence).toBe(14);
+  });
+
+  it('retries an incomplete batch after a newer batch has committed', async () => {
+    const first = payload({ sequence: 10, poseEvents: [] });
+    const late = payload({ sequence: 11 });
+    await networkNoiseService.ingest(first);
+    const spy = vi.spyOn(PoseObservation, 'bulkWrite').mockRejectedValueOnce(new Error('write interrupted'));
+    await expect(networkNoiseService.ingest(late)).rejects.toThrow('write interrupted');
+    spy.mockRestore();
+    await networkNoiseService.ingest(payload({ sequence: 12, poseEvents: [] }));
+    expect(await networkNoiseService.ingest(late)).toMatchObject({ duplicate: false, acceptedPoseObservations: 1 });
+    expect((await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())?.lastSequence).toBe(12);
+  });
+
+  it('retries when marking the receipt complete fails after the snapshot write', async () => {
+    const source = payload({ sequence: 12 });
+    const spy = vi.spyOn(NetworkNoiseBatch, 'updateOne').mockRejectedValueOnce(new Error('receipt write interrupted'));
+    await expect(networkNoiseService.ingest(source)).rejects.toThrow('receipt write interrupted');
+    spy.mockRestore();
+    expect((await NetworkNoiseNodeState.findOne({ nodeId: source.nodeId }).lean())?.lastSequence).toBe(12);
+    expect(await networkNoiseService.ingest(source)).toMatchObject({ duplicate: false, acceptedPoseObservations: 0 });
+    expect(await PoseObservation.countDocuments()).toBe(1);
+    expect((await networkNoiseService.ingest(source)).duplicate).toBe(true);
+  });
+
+  it('sets one legacy baseline under concurrent first requests', async () => {
+    const source = payload({ sequence: 12, poseEvents: [] });
+    await NetworkNoiseNodeState.create({ nodeId: source.nodeId, lastSequence: 12,
+      ip: source.snapshot.ip, lastReportedAt: new Date(source.observedAt) });
+    await Promise.all([networkNoiseService.ingest({ ...source, sequence: 14 }),
+      networkNoiseService.ingest({ ...source, sequence: 15 })]);
+    expect((await NetworkNoiseBaseline.findOne({ nodeId: source.nodeId }).lean())?.legacySequence).toBe(12);
+    expect((await networkNoiseService.ingest({ ...source, sequence: 13 })).duplicate).toBe(false);
+    expect((await NetworkNoiseNodeState.findOne({ nodeId: source.nodeId }).lean())?.lastSequence).toBe(15);
+  });
+
+  it('deduplicates simultaneous identical batches and refuses a different payload for the sequence', async () => {
+    const source = payload();
+    const results = await Promise.all(Array.from({ length: 8 }, () => networkNoiseService.ingest(source)));
+    expect(results.some(result => !result.duplicate)).toBe(true);
+    expect(await PoseObservation.countDocuments()).toBe(1);
+    expect(await NetworkNoiseBatch.countDocuments()).toBe(1);
+    await expect(networkNoiseService.ingest({ ...source, signals: [{ type: 'stale_peer', fingerprint: '12345678',
+      count: 1, firstSeenAt: source.observedAt, lastSeenAt: source.observedAt }] }))
+      .rejects.toBeInstanceOf(NetworkNoiseSequenceConflict);
+  });
+
+  it('allows only one content identity for simultaneous requests with the same sequence', async () => {
+    const source = payload();
+    const different = { ...source, snapshot: { ...source.snapshot, blockHeight: 99 } };
+    const results = await Promise.allSettled([networkNoiseService.ingest(source), networkNoiseService.ingest(different)]);
+    expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+    expect(results.filter(result => result.status === 'rejected' && result.reason instanceof NetworkNoiseSequenceConflict)).toHaveLength(1);
+    expect(await NetworkNoiseBatch.countDocuments()).toBe(1);
+    expect(await PoseObservation.countDocuments()).toBe(1);
+  });
+
+  it('recovers a delayed v1 signal without replacing the newer state', async () => {
+    const v2 = payload({ sequence: 10, poseEvents: [] });
+    const { poseEvents: _events, ...base } = v2;
+    const late = { ...base, schemaVersion: 1 as const, sequence: 11,
+      signals: [{ type: 'stale_peer', fingerprint: '12345678', count: 1,
+        firstSeenAt: base.observedAt, lastSeenAt: base.observedAt }] };
+    await networkNoiseService.ingest(v2);
+    await networkNoiseService.ingest({ ...v2, sequence: 12 });
+    expect(await networkNoiseService.ingest(late)).toMatchObject({ duplicate: false, acceptedSignals: 1 });
+    expect(await networkNoiseService.ingest(late)).toMatchObject({ duplicate: true, acceptedSignals: 0 });
+    expect(await NetworkNoiseObservation.countDocuments()).toBe(1);
+    expect((await NetworkNoiseNodeState.findOne({ nodeId: v2.nodeId }).lean())?.lastSequence).toBe(12);
+  });
 
   it('stores one event with twelve distinct observers and deduplicates later sequences', async () => {
     for (let i = 0; i < 12; i++) {
@@ -153,7 +251,7 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(state).toMatchObject({ lastSequence: 13, ip: '198.51.100.41', blockHeight: 200 });
     expect(state?.lastCleanAt).toEqual(delayedSequence === 12 ? null : new Date(older.observedAt));
     expect(await PoseObservation.countDocuments()).toBe(1);
-    expect((await networkNoiseService.ingest(first)).duplicate).toBe(true);
+    await expect(networkNoiseService.ingest(first)).rejects.toBeInstanceOf(NetworkNoiseSequenceConflict);
   });
 
   it('accepts sequence zero for a new node and rejects its retry', async () => {

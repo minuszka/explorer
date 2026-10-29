@@ -3,6 +3,7 @@ import request from 'supertest';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { config } from '../src/config';
 import { poseEvent, posePayload } from './fixtures/poseTelemetry';
+import { NetworkNoiseSequenceConflict } from '../src/services/networkNoiseBatch.service';
 
 const mocks = vi.hoisted(() => ({
   ingest: vi.fn(),
@@ -192,6 +193,14 @@ describe('network noise v1 routes', () => {
       .set('Authorization', `Bearer ${TOKEN}`).send(posePayload());
     expect(response.status).toBe(200);
     expect(response.body.data.acceptedPoseObservations).toBe(0);
+  });
+
+  it('returns a conflict for a reused sequence with different content', async () => {
+    mocks.ingest.mockRejectedValue(new NetworkNoiseSequenceConflict('Sequence already belongs to a different batch'));
+    const response = await request(app).post('/api/v1/network-noise/ingest')
+      .set('Authorization', `Bearer ${TOKEN}`).send(posePayload());
+    expect(response.status).toBe(409);
+    expect(response.body.error.code).toBe('SEQUENCE_CONFLICT');
   });
 
   it('returns paginated observed-only data with no cache', async () => {

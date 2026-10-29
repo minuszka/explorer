@@ -6,6 +6,7 @@ import { NetworkNoiseObservation } from '../models/NetworkNoiseObservation';
 import { logger } from '../utils/logger';
 import { isDuplicateKeyOnly } from '../domain/pose/poseTelemetry';
 import { poseTelemetryService } from './poseTelemetry.service';
+import { networkNoiseBatchService } from './networkNoiseBatch.service';
 
 export type NetworkNoiseRole = 'seed' | 'fullnode' | 'test_mn' | 'masternode' | 'unknown';
 
@@ -73,11 +74,7 @@ class NetworkNoiseService {
     noiseScore: number;
     acceptedPoseObservations?: number;
   }> {
-    const current = await NetworkNoiseNodeState.findOne({ nodeId: payload.nodeId })
-      .select({ lastSequence: 1 })
-      .lean();
-
-    if (current && payload.sequence <= current.lastSequence) {
+    if (await networkNoiseBatchService.claim(payload) === 'duplicate') {
       return {
         duplicate: true,
         acceptedSignals: 0,
@@ -178,6 +175,7 @@ class NetworkNoiseService {
       await NetworkNoiseNodeState.updateOne(stateFilter, { $set: stateUpdate });
     }
 
+    await networkNoiseBatchService.complete(payload);
     return {
       duplicate: false,
       acceptedSignals: payload.signals.length,

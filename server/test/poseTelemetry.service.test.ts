@@ -3,11 +3,14 @@ import { NetworkNoiseNodeState } from '../src/models/NetworkNoiseNodeState';
 import { NetworkNoiseObservation } from '../src/models/NetworkNoiseObservation';
 import { PoseObservation } from '../src/models/PoseObservation';
 import { networkNoiseService } from '../src/services/networkNoise.service';
+import { networkNoiseBatchService } from '../src/services/networkNoiseBatch.service';
 import { poseTelemetryService } from '../src/services/poseTelemetry.service';
 import { posePayload } from './fixtures/poseTelemetry';
 
 describe('structured telemetry persistence and retry boundaries', () => {
   beforeEach(() => {
+    vi.spyOn(networkNoiseBatchService, 'claim').mockResolvedValue('process');
+    vi.spyOn(networkNoiseBatchService, 'complete').mockResolvedValue();
     vi.spyOn(PoseObservation, 'init').mockResolvedValue(PoseObservation);
     vi.spyOn(NetworkNoiseNodeState, 'init').mockResolvedValue(NetworkNoiseNodeState);
     vi.spyOn(NetworkNoiseNodeState, 'findOne').mockReturnValue({
@@ -73,9 +76,7 @@ describe('structured telemetry persistence and retry boundaries', () => {
   });
 
   it('does not write structured events for a duplicate sequence', async () => {
-    vi.mocked(NetworkNoiseNodeState.findOne).mockReturnValue({
-      select: () => ({ lean: async () => ({ lastSequence: 12 }) }),
-    } as never);
+    vi.mocked(networkNoiseBatchService.claim).mockResolvedValue('duplicate');
     const result = await networkNoiseService.ingest(posePayload());
     expect(result).toEqual({ duplicate: true, acceptedSignals: 0, noiseScore: 0, acceptedPoseObservations: 0 });
     expect(PoseObservation.bulkWrite).not.toHaveBeenCalled();

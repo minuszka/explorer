@@ -44,13 +44,16 @@ The server handles a request in this order:
 1. If `NETWORK_NOISE_MONITOR_ENABLED` is off, it returns `503` with code `DISABLED`.
 2. It validates the body against the schema below. On failure it returns `400` with code `BAD_REQUEST` and the first validation message.
 3. It looks up the token configured for the payload's `nodeId` and compares it with the bearer token in constant time. A missing, unknown, or wrong token returns `401` with code `UNAUTHORIZED`.
-4. If `sequence` is less than or equal to the last accepted sequence for that node, the server stores nothing and returns `200` with `duplicate: true`.
-5. Otherwise it stores the batch and returns `202`.
+4. On the first request for a node after this update, the existing last sequence is fixed as a legacy baseline. Sequences at or below that baseline return `200` with `duplicate: true`; their original contents are not available for comparison.
+5. Above the baseline, the server stores a permanent receipt keyed by node and sequence with a digest of the normalized batch. An already completed identical batch returns `200` with `duplicate: true`. A different payload with the same node and sequence returns `409` with code `SEQUENCE_CONFLICT`.
+6. A previously unseen or incomplete batch above the baseline is processed and returns `202`. Observations use their existing idempotent keys, and the node snapshot only advances to a higher sequence. This permits recovery of a delayed batch without rewinding the snapshot.
 
-Concurrent batches can both pass the initial sequence check. Each may store
-observations, but a later-finishing older batch cannot replace a newer node
-snapshot. Agents should send batches in sequence; a lower sequence arriving
-after a higher one was accepted is treated as a duplicate, not recovered.
+Concurrent identical batches can both process; their observation keys remain
+idempotent. A failed or interrupted batch can be retried after a newer batch.
+Receipts have no TTL: deleting them would allow an old batch to be accepted again,
+so operators must account for storage growth. The legacy baseline and receipts
+must be preserved together with node state. Run one compatible server version
+for ingest during the transition; older writers do not create receipts.
 
 Error bodies have the form `{"success": false, "error": {"code": "...", "message": "..."}}`. A storage failure returns `500` with code `INTERNAL` and an `errorId`. Responses produced before the route handler runs do not use this shape: a body that is not valid JSON (`400`) or is larger than 100 KB (`413`) is answered by Express's default error handler, and `429` responses carry the rate limiter's plain-text message.
 
@@ -164,7 +167,8 @@ If the same batch is sent again, the response is `200` with `{ "duplicate": true
 
 ### Structured PoSe/DKG payload (`schemaVersion` 2)
 
-Version 1 agents continue to work unchanged. Version 2 carries the same batch,
+Version 1 payloads remain supported. Agents must retain the exact batch for retries;
+their handling of a sequence conflict must be verified separately. Version 2 carries the same batch,
 snapshot and legacy `signals` fields, plus a required `poseEvents` array (0–100
 entries). Each entry describes one source event, with no occurrence multiplier.
 The legacy score, `activeSignals` and timeline continue to use `signals` only;
@@ -279,7 +283,7 @@ Consequences for agents and operators:
 
 - A node's score and active signal types always come from its latest accepted batch. A clean batch resets the node to a score of 0. Its earlier observations stay in the timeline until they expire.
 - Stale detection uses the agent's own clock (`observedAt`). An agent must report more often than `NETWORK_NOISE_STALE_AFTER_MS`, or the node shows as stale.
-- If an agent restarts its sequence at a lower number, the server treats every batch as a duplicate until the sequence passes the stored `lastSequence`. Deleting the node's state document resets this.
+- An agent must persist its sequence across restarts. Reusing a sequence in the receipt-tracked range with different content returns a conflict; the legacy range remains conservatively rejected. Deleting only the node state does not reset the receipt history or its baseline.
 - Node state documents never expire. When you remove a node's token, it can no longer report, but it still appears in the summary as stale until you delete its state document.
 
 ## Signal Types and Scoring
@@ -445,7 +449,7 @@ Give each node its own random token, for example one made with `openssl rand -he
 
 - **The summary is public.** The summary endpoint and the page require no login. For every known node they show the `nodeId`, role, wallet and agent versions, chain tip, ChainLock, and connection counts. For recent signals they also show fingerprints and log samples. Reported node IPs and peer IPs are stored in MongoDB but left out of the summary. Register only nodes whose log content you are willing to publish, and choose node IDs that do not reveal internal host names.
 - **The agent must redact.** The server stores samples exactly as it receives them. It rejects samples longer than 300 characters but removes nothing from them. Before sending, the agent must strip credentials, keys, file paths, and any address or identifier that should not be published.
-- **Authentication uses static tokens.** Each token is a shared secret for one node. Requests are not signed, and replay protection is limited to the sequence check. To rotate a token, update `NETWORK_NOISE_INGEST_TOKENS` and restart the server.
+- **Authentication uses static tokens.** Each token is a shared secret for one node. Requests are not signed. The legacy high-water mark and tracked batch receipts prevent reprocessing known sequences, but an unseen sequence above the baseline can be accepted out of order. To rotate a token, update `NETWORK_NOISE_INGEST_TOKENS` and restart the server.
 
 ## Limitations
 
