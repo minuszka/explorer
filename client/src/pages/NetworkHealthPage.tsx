@@ -486,6 +486,9 @@ export default function NetworkHealthPage() {
                 <p className="text-muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8rem' }}>
                   Live peers match an outbound connection to the exact IP and port. Other endpoints have unknown reachability.
                 </p>
+                <p className="text-muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8rem' }}>
+                  The feed percentage has an unverified meaning and does not establish time-based uptime.
+                </p>
               </div>
               <span className="badge">
                 {livePeerCount} live peer{livePeerCount === 1 ? '' : 's'}
@@ -536,7 +539,7 @@ export default function NetworkHealthPage() {
                       <th>Chain status</th>
                       <th>Height</th>
                       <th>Snapshot hash</th>
-                      <th>2h uptime</th>
+                      <th>Feed percentage</th>
                       <th>Version</th>
                       <th>Source time</th>
                     </tr>

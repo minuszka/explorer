@@ -13,6 +13,7 @@ export const dnsSeederNodeSchema = z.object({
   bestBlockHash: z.string().regex(/^[0-9a-f]{64}$/i).nullable(),
   isLivePeer: z.boolean(),
   livePeerObservedAt: timestamp.nullable(),
+  // Legacy field name; the feed metric's meaning is not verified as time-based uptime.
   uptime2h: z.number().min(0).max(100).nullable(),
   lastSeen: timestamp.nullable(),
   walletVersion: z.string().nullable(),

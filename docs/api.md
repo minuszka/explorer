@@ -115,6 +115,8 @@ the admin with approve and reject buttons. Bulk submissions are reviewed through
   state and observation time. The crawler snapshot time and completeness remain explicitly unknown;
   fetching a feed does not establish its measurement age. Invalid feed shapes return 503, or retain a
   still-allowed old feed labelled `stale`. An empty valid feed and a disabled feed are distinct.
+  The legacy `uptime2h` field exposes a normalized feed percentage; its producer and meaning have not been
+  verified, so it does not establish time-based uptime.
   Requests coalesce and keep the existing short cache, timeout, failure backoff and stale-age bounds.
   Upstream feed downloads are capped at 5 MiB; normalized output at 10,000 unique endpoints.
   Rejected, duplicate and omitted records are counted. The Nodes page manually paginates all returned endpoints.
@@ -124,7 +126,7 @@ the admin with approve and reject buttons. Bulk submissions are reviewed through
   peer count. Version fields identify their source. Crawler hashes and heights remain discovery metadata
   and are never combined with peer heights to assert a chain hash match. A failed RPC refresh withdraws
   direct-peer claims; the browser also expires them after 180 seconds or a failed API refresh.
-  `meta.portFailureEvidence` is `unavailable`: peer absence, uptime and last-seen age cannot identify
+  `meta.portFailureEvidence` is `unavailable`: peer absence, feed percentage and last-seen age cannot identify
   PORT_REFUSED / PORT_TIMEOUT, consecutive failed attempts, or agreement between independent failure
   measurements. Unknown reachability has a neutral badge and no operator-action cue. This adapter
   introduces no active port probes, scheduled collector or configuration change.
