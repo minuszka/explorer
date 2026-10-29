@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   HiOutlineArrowPath,
@@ -48,17 +48,35 @@ function levelLabel(level: NetworkNoiseLevel): string {
 
 export default function NetworkNoisePage() {
   const isPageVisible = usePageVisibility();
+  const [clock, setClock] = useState(Date.now);
+  useEffect(() => {
+    const timer = window.setInterval(() => setClock(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [hours, setHours] = useState(24);
   const [nodeFilter, setNodeFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
-  const { data: response, isLoading, isFetching, error, refetch } = useQuery({
+  const { data: response, dataUpdatedAt, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: ['devtools', 'network-noise', hours],
     queryFn: () => fetchNetworkNoiseSummary(hours),
     staleTime: 30_000,
     refetchInterval: isPageVisible ? 60_000 : false,
   });
   const data = error ? undefined : response;
-  const hasFreshReports = Boolean(data && data.summary.reportingNodes > 0);
+  const now = Math.max(clock, Date.now());
+  const maxAge = data ? data.staleAfterSeconds * 1000 : 0;
+  const reportIsFresh = (reportedAt: string) => {
+    const age = now - Date.parse(reportedAt);
+    return Number.isFinite(age) && age >= 0 && age <= maxAge;
+  };
+  const generatedAge = data ? now - Date.parse(data.generatedAt) : NaN;
+  const receivedAge = now - dataUpdatedAt;
+  const serverFreshNodes = data?.nodes.filter((node) => !node.isStale) ?? [];
+  const snapshotCurrent = Boolean(data && maxAge > 0 && Number.isFinite(generatedAge)
+    && generatedAge >= -5000 && generatedAge <= maxAge && receivedAge >= 0 && receivedAge <= maxAge
+    && serverFreshNodes.length === data.summary.reportingNodes
+    && serverFreshNodes.every((node) => reportIsFresh(node.lastReportedAt)));
+  const hasFreshReports = Boolean(snapshotCurrent && data && data.summary.reportingNodes > 0);
 
   const nodes = useMemo(
     () =>
@@ -124,18 +142,19 @@ export default function NetworkNoisePage() {
         <HiOutlineExclamationTriangle />
         Correlation is evidence, not proof of causation. IP, provider, and wallet-version matches are shown as context.
       </div>
+      {data && !snapshotCurrent && <p role="status">Current report data expired or has an invalid timestamp. Refresh to verify.</p>}
 
       <section className="nn-stats">
         <Stat
           label="Current noise"
           value={hasFreshReports && data ? levelLabel(data.summary.currentLevel) : isLoading ? '...' : 'Unknown'}
-          detail={hasFreshReports && data ? `score ${data.summary.currentScore}/100` : error ? 'Telemetry unavailable' : isLoading ? undefined : 'No fresh reports'}
+          detail={hasFreshReports && data ? `score ${data.summary.currentScore}/100` : error ? 'Telemetry unavailable' : isLoading ? undefined : snapshotCurrent ? 'No fresh reports' : 'Freshness unknown'}
           tone={hasFreshReports ? data?.summary.currentLevel : undefined}
         />
-        <Stat label="Reporting nodes" value={data ? `${data.summary.reportingNodes}/${data.summary.knownNodes}` : isLoading ? '...' : 'Unknown'} detail="fresh agent heartbeat" />
+        <Stat label="Reporting nodes" value={snapshotCurrent && data ? `${data.summary.reportingNodes}/${data.summary.knownNodes}` : isLoading ? '...' : 'Unknown'} detail="fresh agent heartbeat" />
         <Stat label="Active signals" value={hasFreshReports && data ? formatNumber(data.summary.activeSignals) : isLoading ? '...' : 'Unknown'} detail="latest reporting cycle" />
         <Stat label="Chain alerts" value={hasFreshReports && data ? formatNumber(data.summary.chainAlerts) : isLoading ? '...' : 'Unknown'} detail="nodes with chain-related signals" tone={hasFreshReports ? data?.summary.chainAlerts ? 'severe' : 'quiet' : undefined} />
-        <Stat label="Stale agents" value={data ? formatNumber(data.summary.staleNodes) : isLoading ? '...' : 'Unknown'} detail="Missing, old, or future-dated reports" tone={data ? data.summary.staleNodes ? 'elevated' : 'quiet' : undefined} />
+        <Stat label="Stale agents" value={snapshotCurrent && data ? formatNumber(data.summary.staleNodes) : isLoading ? '...' : 'Unknown'} detail="Missing, old, or future-dated reports" tone={snapshotCurrent && data ? data.summary.staleNodes ? 'elevated' : 'quiet' : undefined} />
       </section>
 
       <section className="card nn-card">
@@ -233,7 +252,7 @@ export default function NetworkNoisePage() {
                     <td><strong className="mono">{node.blockHeight != null ? formatNumber(node.blockHeight) : '-'}</strong><span className="mono">{node.bestBlockHash ? truncateHash(node.bestBlockHash, 5) : '-'}</span></td>
                     <td><strong className="mono">{node.chainLockHeight != null ? formatNumber(node.chainLockHeight) : '-'}</strong><span className="mono">{node.chainLockHash ? truncateHash(node.chainLockHash, 5) : '-'}</span></td>
                     <td><strong>{node.connections ?? '-'}</strong><span>{node.inbound ?? '-'} in / {node.outbound ?? '-'} out</span></td>
-                    <td><span className={`nn-level nn-level-${node.isStale ? 'stale' : levelForScore(node.noiseScore)}`}>{node.isStale ? 'STALE' : `${node.noiseScore}/100`}</span><span>{node.signalCount} signals</span></td>
+                    <td><span className={`nn-level nn-level-${node.isStale || !reportIsFresh(node.lastReportedAt) || !snapshotCurrent ? 'stale' : levelForScore(node.noiseScore)}`}>{node.isStale || !reportIsFresh(node.lastReportedAt) ? 'STALE' : !snapshotCurrent ? 'UNKNOWN' : `${node.noiseScore}/100`}</span><span>{node.signalCount} signals</span></td>
                     <td><strong>{timeAgo(node.lastReportedAt)}</strong><span>{node.activeSignalTypes.map(signalLabel).join(', ') || 'Clean'}</span></td>
                   </tr>
                 ))}
