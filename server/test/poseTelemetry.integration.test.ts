@@ -54,6 +54,37 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(poseObservedEventsApiResponseSchema.safeParse({ success: true, data }).success).toBe(true);
   });
 
+  it('treats a future-dated node report as stale without counting its active signals', async () => {
+    const now = Date.now();
+    const future = new Date(now + 3600000).toISOString();
+    const recent = new Date(now - 1000).toISOString();
+    const signal = { type: 'chainlock_conflict', fingerprint: 'freshness-test', count: 4,
+      firstSeenAt: recent, lastSeenAt: recent };
+    await networkNoiseService.ingest(payload({ nodeId: 'future-node', observedAt: future, poseEvents: [], signals: [signal] }));
+    await networkNoiseService.ingest(payload({ nodeId: 'fresh-node', observedAt: recent, poseEvents: [], signals: [] }));
+    const result = await networkNoiseService.getSummary(24);
+    expect(result.summary).toMatchObject({ knownNodes: 2, reportingNodes: 1, staleNodes: 1, activeSignals: 0, chainAlerts: 0 });
+    expect(result.nodes.find((entry) => entry.nodeId === 'future-node')?.isStale).toBe(true);
+    expect(result.nodes.find((entry) => entry.nodeId === 'fresh-node')?.isStale).toBe(false);
+    expect(result.timeline).toEqual([]);
+    expect(result.recentSignals).toEqual([]);
+  });
+
+  it('excludes future and expired signals from the timeline and recent evidence', async () => {
+    const now = Date.now();
+    const recent = new Date(now - 1000).toISOString();
+    const future = new Date(now + 3600000).toISOString();
+    const signal = (type: string, at: string) => ({ type, fingerprint: `fingerprint-${type}`, count: 1,
+      firstSeenAt: at, lastSeenAt: at });
+    await networkNoiseService.ingest(payload({ poseEvents: [], signals: [signal('fresh_signal', recent),
+      signal('expired_signal', recent), signal('future_signal', future)] }));
+    await NetworkNoiseObservation.updateOne({ signalType: 'expired_signal' }, { $set: { expiresAt: new Date(now - 1000) } });
+    expect(await NetworkNoiseObservation.countDocuments({ signalType: 'expired_signal' })).toBe(1);
+    const result = await networkNoiseService.getSummary(24);
+    expect(result.recentSignals.map((entry) => entry.signalType)).toEqual(['fresh_signal']);
+    expect(result.timeline.map((entry) => entry.signalType)).toEqual(['fresh_signal']);
+  });
+
   it('filters observations by the complete ban anchor without promoting log evidence', async () => {
     const first = payload();
     const event = first.poseEvents[0];

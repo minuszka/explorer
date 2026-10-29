@@ -401,15 +401,16 @@ Response shape (abridged):
 | --- | --- |
 | `staleAfterSeconds` | `NETWORK_NOISE_STALE_AFTER_MS` in seconds |
 | `summary.knownNodes` | All nodes that have a state document, stale ones included |
-| `summary.reportingNodes` | Nodes whose `lastReportedAt` falls inside the stale threshold |
+| `summary.reportingNodes` | Nodes whose `lastReportedAt` falls inside the stale threshold and is not in the future |
 | `summary.staleNodes` | `knownNodes - reportingNodes` |
 | `summary.activeSignals` | Sum of `signalCount` over reporting nodes |
 | `summary.chainAlerts` | Number of reporting nodes whose latest batch contained a chain-related type |
 | `nodes` | Every known node, sorted by `noiseScore` (highest first), then by `lastReportedAt` (newest first) |
-| `timeline` | Stored observations whose `lastSeenAt` falls in the window, grouped by UTC hour of `lastSeenAt` and by `signalType`. `count` is the sum of occurrences and `nodes` lists the distinct node IDs |
-| `recentSignals` | Up to 80 stored observations in the window, newest `lastSeenAt` first |
+| `timeline` | Unexpired observations whose `lastSeenAt` falls in the window and whose `observedAt` and `lastSeenAt` are not in the future, grouped by UTC hour and `signalType`. `count` is the sum of occurrences and `nodes` lists the distinct node IDs |
+| `recentSignals` | Up to 80 unexpired observations in the window, excluding future `observedAt` or `lastSeenAt`, newest `lastSeenAt` first |
 
 The summary never includes the reported node IPs (`snapshot.ip`) or the signals' `peerIps`. The server stores them but does not publish them.
+Future-dated reports remain stored but are not counted as fresh. A zero reporting-node count does not establish a quiet network; the legacy numeric summary fields remain zero for API compatibility.
 
 ## Web Page
 

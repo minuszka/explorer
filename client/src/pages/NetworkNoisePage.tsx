@@ -51,12 +51,14 @@ export default function NetworkNoisePage() {
   const [hours, setHours] = useState(24);
   const [nodeFilter, setNodeFilter] = useState('all');
   const [roleFilter, setRoleFilter] = useState('all');
-  const { data, isLoading, isFetching, error, refetch } = useQuery({
+  const { data: response, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: ['devtools', 'network-noise', hours],
     queryFn: () => fetchNetworkNoiseSummary(hours),
     staleTime: 30_000,
     refetchInterval: isPageVisible ? 60_000 : false,
   });
+  const data = error ? undefined : response;
+  const hasFreshReports = Boolean(data && data.summary.reportingNodes > 0);
 
   const nodes = useMemo(
     () =>
@@ -126,14 +128,14 @@ export default function NetworkNoisePage() {
       <section className="nn-stats">
         <Stat
           label="Current noise"
-          value={data ? levelLabel(data.summary.currentLevel) : '...'}
-          detail={data ? `score ${data.summary.currentScore}/100` : undefined}
-          tone={data?.summary.currentLevel}
+          value={hasFreshReports && data ? levelLabel(data.summary.currentLevel) : isLoading ? '...' : 'Unknown'}
+          detail={hasFreshReports && data ? `score ${data.summary.currentScore}/100` : error ? 'Telemetry unavailable' : isLoading ? undefined : 'No fresh reports'}
+          tone={hasFreshReports ? data?.summary.currentLevel : undefined}
         />
-        <Stat label="Reporting nodes" value={data ? `${data.summary.reportingNodes}/${data.summary.knownNodes}` : '...'} detail="fresh agent heartbeat" />
-        <Stat label="Active signals" value={data ? formatNumber(data.summary.activeSignals) : '...'} detail="latest reporting cycle" />
-        <Stat label="Chain alerts" value={data ? formatNumber(data.summary.chainAlerts) : '...'} detail="nodes with chain-related signals" tone={data?.summary.chainAlerts ? 'severe' : 'quiet'} />
-        <Stat label="Stale agents" value={data ? formatNumber(data.summary.staleNodes) : '...'} detail={`>${data?.staleAfterSeconds ?? 180}s without report`} tone={data?.summary.staleNodes ? 'elevated' : 'quiet'} />
+        <Stat label="Reporting nodes" value={data ? `${data.summary.reportingNodes}/${data.summary.knownNodes}` : isLoading ? '...' : 'Unknown'} detail="fresh agent heartbeat" />
+        <Stat label="Active signals" value={hasFreshReports && data ? formatNumber(data.summary.activeSignals) : isLoading ? '...' : 'Unknown'} detail="latest reporting cycle" />
+        <Stat label="Chain alerts" value={hasFreshReports && data ? formatNumber(data.summary.chainAlerts) : isLoading ? '...' : 'Unknown'} detail="nodes with chain-related signals" tone={hasFreshReports ? data?.summary.chainAlerts ? 'severe' : 'quiet' : undefined} />
+        <Stat label="Stale agents" value={data ? formatNumber(data.summary.staleNodes) : isLoading ? '...' : 'Unknown'} detail="Missing, old, or future-dated reports" tone={data ? data.summary.staleNodes ? 'elevated' : 'quiet' : undefined} />
       </section>
 
       <section className="card nn-card">
