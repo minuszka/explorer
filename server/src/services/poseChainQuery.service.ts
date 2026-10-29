@@ -2,20 +2,25 @@ import type { PipelineStage } from 'mongoose';
 import type { PoseChainData, PoseChainQuery } from '@defcon/shared/dist/contracts';
 import { config } from '../config';
 import { PoseChainBlock } from '../models/PoseChainBlock';
-import { PoseChainState } from '../models/PoseChainState';
+import { PoseChainState, type PoseChainStateDocument } from '../models/PoseChainState';
 import { PoseObservation } from '../models/PoseObservation';
 import type { PenaltyAttribution } from '../domain/pose/penaltyAttribution';
+
+function collectorStatus(state: PoseChainStateDocument | null, now: Date): PoseChainData['status'] {
+  if (!config.poseChain.enabled) return 'disabled';
+  if (!state || state.status === 'error') return 'unavailable';
+  if (state.status !== 'ready') return 'collecting';
+  const age = state.checkedAt ? now.getTime() - state.checkedAt.getTime() : Infinity;
+  return !Number.isFinite(age) || age < 0 || age > Math.max(180000, config.poseChain.intervalMs * 3) ? 'stale' : 'ready';
+}
 
 export async function getPoseChainData(query: PoseChainQuery): Promise<PoseChainData> {
   const now = new Date();
   const windowFrom = new Date(Math.max(now.getTime() - query.hours * 3600000,
     query.since ? Date.parse(query.since) : 0));
   const state = await PoseChainState.findOne({ key: 'main' }).lean();
-  const status: PoseChainData['status'] = !config.poseChain.enabled ? 'disabled'
-    : !state || state.status === 'error' ? 'unavailable'
-    : state.status === 'collecting' ? 'collecting'
-    : !state.checkedAt || now.getTime() - state.checkedAt.getTime() > Math.max(180000, config.poseChain.intervalMs * 3)
-      ? 'stale' : 'ready';
+  const status = collectorStatus(state, now);
+  const attributionEnabled = config.poseChain.attributionEnabled;
   const data: PoseChainData = {
     generatedAt: now.toISOString(), status,
     coverage: {
@@ -154,9 +159,12 @@ export async function getPoseChainData(query: PoseChainQuery): Promise<PoseChain
   });
   // A rollback may have begun while the queries were pending. Fail closed.
   const after = await PoseChainState.findOne({ key: 'main' }).lean();
-  if (!after || after.status !== 'ready' || after.revision !== state.revision || after.lastHash !== state.lastHash
+  const finalStatus = collectorStatus(after, new Date());
+  if (!after || finalStatus !== 'ready' || config.poseChain.attributionEnabled !== attributionEnabled
+    || after.revision !== state.revision || after.lastHash !== state.lastHash
+    || after.startHeight !== state.startHeight || after.lastHeight !== state.lastHeight || after.targetHeight !== state.targetHeight
     || after.checkedAt?.getTime() !== state.checkedAt?.getTime()) {
-    return { ...data, status: 'collecting', coverage: { ...data.coverage, caughtUp: false },
+    return { ...data, status: finalStatus === 'ready' ? 'collecting' : finalStatus, coverage: { ...data.coverage, caughtUp: false },
       total: 0, quorumSummary: [], commitments: [], penaltyCoverage: { ...data.penaltyCoverage,
         commitmentBlocks: 0, verifiedBlocks: 0, pendingBlocks: 0, unavailableBlocks: 0, unsupportedBlocks: 0,
         inconsistentBlocks: 0, notApplicableBlocks: 0 } };

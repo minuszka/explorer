@@ -40,4 +40,40 @@ describe('canonical summary and coverage window', () => {
     const data = await getPoseChainData(poseChainQuerySchema.parse({}));
     expect(data).toMatchObject({ status: 'collecting', quorumSummary: [], penaltyCoverage: { verifiedBlocks: 0, commitmentBlocks: 0 } });
   });
+
+  it('does not query or publish evidence when the checkpoint time is in the future', async () => {
+    mocks.findOne.mockReturnValue({ lean: async () => ({ ...state, checkedAt: new Date(now.getTime() + 1) }) });
+    const data = await getPoseChainData(poseChainQuerySchema.parse({}));
+    expect(data).toMatchObject({ status: 'stale', total: 0, quorumSummary: [], commitments: [], coverage: { caughtUp: false } });
+    expect(mocks.aggregate).not.toHaveBeenCalled();
+  });
+
+  it('withdraws results when the checkpoint expires while the query is running', async () => {
+    mocks.findOne.mockReturnValueOnce({ lean: async () => state }).mockReturnValueOnce({ lean: async () => {
+      vi.setSystemTime(now.getTime() + Math.max(180000, config.poseChain.intervalMs * 3) + 1);
+      return state;
+    } });
+    const data = await getPoseChainData(poseChainQuerySchema.parse({}));
+    expect(data).toMatchObject({ status: 'stale', total: 0, quorumSummary: [], commitments: [],
+      penaltyCoverage: { verifiedBlocks: 0, commitmentBlocks: 0 }, coverage: { caughtUp: false } });
+  });
+
+  it.each(['targetHeight', 'lastHeight', 'startHeight'])('withdraws results if %s changes during the read', async (field) => {
+    mocks.findOne.mockReturnValueOnce({ lean: async () => state })
+      .mockReturnValueOnce({ lean: async () => ({ ...state, [field]: state[field as keyof typeof state] as number + 1 }) });
+    const data = await getPoseChainData(poseChainQuerySchema.parse({}));
+    expect(data).toMatchObject({ status: 'collecting', total: 0, quorumSummary: [], commitments: [],
+      penaltyCoverage: { verifiedBlocks: 0, commitmentBlocks: 0 }, coverage: { caughtUp: false } });
+  });
+
+  it.each(['collector', 'attribution'])('withdraws results if %s is disabled during the read', async (feature) => {
+    mocks.findOne.mockReturnValueOnce({ lean: async () => state }).mockReturnValueOnce({ lean: async () => {
+      if (feature === 'collector') config.poseChain.enabled = false;
+      else config.poseChain.attributionEnabled = false;
+      return state;
+    } });
+    const data = await getPoseChainData(poseChainQuerySchema.parse({}));
+    expect(data).toMatchObject({ status: feature === 'collector' ? 'disabled' : 'collecting', total: 0,
+      quorumSummary: [], commitments: [], penaltyCoverage: { verifiedBlocks: 0, commitmentBlocks: 0 }, coverage: { caughtUp: false } });
+  });
 });
