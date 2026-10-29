@@ -9,6 +9,7 @@ import { posePayload } from './fixtures/poseTelemetry';
 describe('structured telemetry persistence and retry boundaries', () => {
   beforeEach(() => {
     vi.spyOn(PoseObservation, 'init').mockResolvedValue(PoseObservation);
+    vi.spyOn(NetworkNoiseNodeState, 'init').mockResolvedValue(NetworkNoiseNodeState);
     vi.spyOn(NetworkNoiseNodeState, 'findOne').mockReturnValue({
       select: () => ({ lean: async () => null }),
     } as never);
@@ -55,6 +56,20 @@ describe('structured telemetry persistence and retry boundaries', () => {
     const result = await networkNoiseService.ingest(posePayload());
     expect(result.acceptedPoseObservations).toBe(1);
     expect(NetworkNoiseNodeState.updateOne).toHaveBeenCalledOnce();
+  });
+
+  it('propagates a non-duplicate state-write failure so the batch can retry', async () => {
+    const error = new Error('node state write failed');
+    vi.mocked(NetworkNoiseNodeState.updateOne).mockRejectedValue(error);
+    await expect(networkNoiseService.ingest(posePayload())).rejects.toBe(error);
+    expect(NetworkNoiseNodeState.updateOne).toHaveBeenCalledOnce();
+  });
+
+  it('propagates a failed conditional retry after a node-key race', async () => {
+    const error = new Error('conditional retry failed');
+    vi.mocked(NetworkNoiseNodeState.updateOne).mockRejectedValueOnce({ code: 11000 }).mockRejectedValueOnce(error);
+    await expect(networkNoiseService.ingest(posePayload())).rejects.toBe(error);
+    expect(NetworkNoiseNodeState.updateOne).toHaveBeenCalledTimes(2);
   });
 
   it('does not write structured events for a duplicate sequence', async () => {

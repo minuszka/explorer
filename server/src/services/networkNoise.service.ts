@@ -162,14 +162,21 @@ class NetworkNoiseService {
       stateUpdate.lastCleanAt = observedAt;
     }
 
-    await NetworkNoiseNodeState.updateOne(
-      { nodeId: payload.nodeId },
-      {
+    // A concurrent newer batch may have committed after the initial read.
+    // Ensure the unique node key exists before relying on the upsert race guard.
+    await NetworkNoiseNodeState.init();
+    const stateFilter = { nodeId: payload.nodeId, lastSequence: { $lt: payload.sequence } };
+    try {
+      await NetworkNoiseNodeState.updateOne(stateFilter, {
         $set: stateUpdate,
         $setOnInsert: { nodeId: payload.nodeId },
-      },
-      { upsert: true }
-    );
+      }, { upsert: true });
+    } catch (error) {
+      if (!isDuplicateKeyOnly(error)) throw error;
+      // Another writer inserted the node, or an equal/newer sequence already
+      // exists. Retry without upsert so only an older state can be updated.
+      await NetworkNoiseNodeState.updateOne(stateFilter, { $set: stateUpdate });
+    }
 
     return {
       duplicate: false,

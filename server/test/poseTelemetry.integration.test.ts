@@ -77,6 +77,45 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(await PoseObservation.countDocuments()).toBe(1);
   });
 
+  it.each([12, 13])('keeps the newer v2 snapshot when sequence %i finishes last', async (delayedSequence) => {
+    const first = payload({ sequence: 12, poseEvents: [] });
+    const { poseEvents: _events, ...legacy } = first;
+    let releaseDelayed!: () => void;
+    let delayedWaiting!: () => void;
+    const delayedBlocked = new Promise<void>((resolve) => { delayedWaiting = resolve; });
+    const continueDelayed = new Promise<void>((resolve) => { releaseDelayed = resolve; });
+    const update = NetworkNoiseNodeState.updateOne.bind(NetworkNoiseNodeState);
+    const spy = vi.spyOn(NetworkNoiseNodeState, 'updateOne').mockImplementation(async (...args: Parameters<typeof update>) => {
+      const change = args[1] as { $set?: { lastSequence?: number } };
+      if (change.$set?.lastSequence === delayedSequence) { delayedWaiting(); await continueDelayed; }
+      return update(...args);
+    });
+    const older = { ...legacy, schemaVersion: 1 as const };
+    const newer = payload({ sequence: 13, snapshot: { ip: '198.51.100.41', blockHeight: 200 } });
+    const delayed = networkNoiseService.ingest(delayedSequence === 12 ? older : newer);
+    try {
+      await delayedBlocked;
+      await networkNoiseService.ingest(delayedSequence === 12 ? newer : older);
+    } finally {
+      releaseDelayed();
+      await delayed;
+      spy.mockRestore();
+    }
+    const state = await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean();
+    expect(state).toMatchObject({ lastSequence: 13, ip: '198.51.100.41', blockHeight: 200 });
+    expect(state?.lastCleanAt).toEqual(delayedSequence === 12 ? null : new Date(older.observedAt));
+    expect(await PoseObservation.countDocuments()).toBe(1);
+    expect((await networkNoiseService.ingest(first)).duplicate).toBe(true);
+  });
+
+  it('accepts sequence zero for a new node and rejects its retry', async () => {
+    const first = payload({ sequence: 0 });
+    expect((await networkNoiseService.ingest(first)).duplicate).toBe(false);
+    expect((await networkNoiseService.ingest(first)).duplicate).toBe(true);
+    expect((await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())?.lastSequence).toBe(0);
+    expect(await PoseObservation.countDocuments()).toBe(1);
+  });
+
   it('preserves alternate block hashes as separate unverified candidates', async () => {
     const first = payload();
     await poseTelemetryService.ingest(first);

@@ -47,6 +47,11 @@ The server handles a request in this order:
 4. If `sequence` is less than or equal to the last accepted sequence for that node, the server stores nothing and returns `200` with `duplicate: true`.
 5. Otherwise it stores the batch and returns `202`.
 
+Concurrent batches can both pass the initial sequence check. Each may store
+observations, but a later-finishing older batch cannot replace a newer node
+snapshot. Agents should send batches in sequence; a lower sequence arriving
+after a higher one was accepted is treated as a duplicate, not recovered.
+
 Error bodies have the form `{"success": false, "error": {"code": "...", "message": "..."}}`. A storage failure returns `500` with code `INTERNAL` and an `errorId`. Responses produced before the route handler runs do not use this shape: a body that is not valid JSON (`400`) or is larger than 100 KB (`413`) is answered by Express's default error handler, and `429` responses carry the rate limiter's plain-text message.
 
 Limits:
