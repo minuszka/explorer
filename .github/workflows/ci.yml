@@ -13,6 +13,16 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    services:
+      mongo:
+        image: mongo:7.0
+        ports:
+          - 127.0.0.1:27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'quit(db.adminCommand({ping:1}).ok === 1 ? 0 : 1)'"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
 
     steps:
       - name: Checkout
@@ -40,7 +50,11 @@ jobs:
         run: npm run build -w deftrack-mcp
 
       - name: Test
-        run: npm run test:ci
+        env:
+          TEST_POSE_MONGO_URI: mongodb://127.0.0.1:27017/deftrack_pose_test_c1
+        run: |
+          : "${TEST_POSE_MONGO_URI:?Disposable MongoDB is required for PoSe integration tests}"
+          npm run test:ci
 
       - name: Install Chromium for browser smoke tests
         run: npx --no-install playwright install --with-deps chromium
