@@ -88,6 +88,9 @@ class NetworkNoiseService {
     const signalTimingInvalid = payload.signals.some((signal) =>
       new Date(signal.firstSeenAt) > receivedAt || new Date(signal.lastSeenAt) > receivedAt
     );
+    const signalIntervalVerified = payload.signals.every((signal) =>
+      new Date(signal.firstSeenAt) <= new Date(signal.lastSeenAt)
+    );
     const expiresAt = new Date(
       observedAt.getTime() + config.networkNoise.observationTtlDays * 24 * 60 * 60 * 1000
     );
@@ -158,6 +161,7 @@ class NetworkNoiseService {
       noiseScore,
       signalCount,
       signalTimingInvalid,
+      signalIntervalVerified,
       activeSignalTypes,
     };
     if (payload.signals.length === 0 && (payload.schemaVersion === 1 || payload.poseEvents.length === 0)) {
@@ -194,7 +198,7 @@ class NetworkNoiseService {
     const from = new Date(now.getTime() - hours * 60 * 60 * 1000);
     const staleCutoff = new Date(now.getTime() - config.networkNoise.staleAfterMs);
     const validSignalWindow = { firstSeenAt: { $lte: now }, lastSeenAt: { $gte: from, $lte: now },
-      observedAt: { $lte: now }, expiresAt: { $gt: now } };
+      observedAt: { $lte: now }, expiresAt: { $gt: now }, $expr: { $lte: ['$firstSeenAt', '$lastSeenAt'] } };
 
     const [states, timelineRows, recentSignals] = await Promise.all([
       NetworkNoiseNodeState.find({})
@@ -257,7 +261,8 @@ class NetworkNoiseService {
     ]);
 
     const isFresh = (state: typeof states[number]) => state.lastReportedAt >= staleCutoff && state.lastReportedAt <= now
-      && (state.signalTimingInvalid === false || (state.signalTimingInvalid === undefined && state.signalCount === 0));
+      && (state.signalTimingInvalid === false || (state.signalTimingInvalid === undefined && state.signalCount === 0))
+      && (state.signalIntervalVerified === true || (state.signalIntervalVerified === undefined && state.signalCount === 0));
     const reporting = states.filter(isFresh);
     const currentScore = reporting.reduce((max, state) => Math.max(max, state.noiseScore), 0);
     const activeSignals = reporting.reduce((total, state) => total + state.signalCount, 0);

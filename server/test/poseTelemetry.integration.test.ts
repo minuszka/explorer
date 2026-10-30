@@ -192,6 +192,25 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(recovered.nodes[0].isStale).toBe(false);
   });
 
+  it.each([1, 2] as const)('excludes an inverted signal interval in a v%i report until recovery', async (version) => {
+    const now = Date.now();
+    const first = new Date(now - 1000).toISOString();
+    const last = new Date(now - 2000).toISOString();
+    const source = payload({ observedAt: first, poseEvents: [], signals: [
+      { type: 'chainlock_conflict', fingerprint: 'inverted-interval', count: 1, firstSeenAt: first, lastSeenAt: last },
+    ] });
+    const { poseEvents: _events, ...common } = source;
+    const report = version === 1 ? { ...common, schemaVersion: 1 as const } : source;
+    await networkNoiseService.ingest(report);
+    const result = await networkNoiseService.getSummary(24);
+    expect(result.summary).toMatchObject({ knownNodes: 1, reportingNodes: 0, staleNodes: 1, activeSignals: 0, chainAlerts: 0 });
+    expect(result.nodes[0].isStale).toBe(true);
+    expect(result.timeline).toEqual([]);
+    expect(result.recentSignals).toEqual([]);
+    await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1, signals: [] });
+    expect((await networkNoiseService.getSummary(24)).summary).toMatchObject({ reportingNodes: 1, staleNodes: 0 });
+  });
+
   it('treats older snapshots with unverified signal times as stale until a new report', async () => {
     const now = new Date().toISOString();
     const report = payload({ observedAt: now, poseEvents: [], signals: [
@@ -199,6 +218,18 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     ] });
     await networkNoiseService.ingest(report);
     await NetworkNoiseNodeState.collection.updateOne({ nodeId: report.nodeId }, { $unset: { signalTimingInvalid: '' } });
+    expect((await networkNoiseService.getSummary(24)).summary).toMatchObject({ reportingNodes: 0, staleNodes: 1, chainAlerts: 0 });
+    await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1 });
+    expect((await networkNoiseService.getSummary(24)).summary).toMatchObject({ reportingNodes: 1, staleNodes: 0, chainAlerts: 1 });
+  });
+
+  it('treats pre-interval-check snapshots with signals as stale until a verified report', async () => {
+    const now = new Date().toISOString();
+    const report = payload({ observedAt: now, poseEvents: [], signals: [
+      { type: 'chainlock_conflict', fingerprint: 'unchecked-interval', count: 1, firstSeenAt: now, lastSeenAt: now },
+    ] });
+    await networkNoiseService.ingest(report);
+    await NetworkNoiseNodeState.collection.updateOne({ nodeId: report.nodeId }, { $unset: { signalIntervalVerified: '' } });
     expect((await networkNoiseService.getSummary(24)).summary).toMatchObject({ reportingNodes: 0, staleNodes: 1, chainAlerts: 0 });
     await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1 });
     expect((await networkNoiseService.getSummary(24)).summary).toMatchObject({ reportingNodes: 1, staleNodes: 0, chainAlerts: 1 });
