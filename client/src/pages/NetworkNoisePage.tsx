@@ -154,7 +154,7 @@ export default function NetworkNoisePage() {
         <Stat label="Reporting nodes" value={snapshotCurrent && data ? `${data.summary.reportingNodes}/${data.summary.knownNodes}` : isLoading ? '...' : 'Unknown'} detail="fresh agent heartbeat" />
         <Stat label="Active signals" value={hasFreshReports && data ? formatNumber(data.summary.activeSignals) : isLoading ? '...' : 'Unknown'} detail="latest reporting cycle" />
         <Stat label="Chain alerts" value={hasFreshReports && data ? formatNumber(data.summary.chainAlerts) : isLoading ? '...' : 'Unknown'} detail="nodes with chain-related signals" tone={hasFreshReports ? data?.summary.chainAlerts ? 'severe' : 'quiet' : undefined} />
-        <Stat label="Stale agents" value={snapshotCurrent && data ? formatNumber(data.summary.staleNodes) : isLoading ? '...' : 'Unknown'} detail="Missing, old, or future-dated reports" tone={snapshotCurrent && data ? data.summary.staleNodes ? 'elevated' : 'quiet' : undefined} />
+        <Stat label="Stale agents" value={snapshotCurrent && data ? formatNumber(data.summary.staleNodes) : isLoading ? '...' : 'Unknown'} detail="Missing, old, or unverified report data" tone={snapshotCurrent && data ? data.summary.staleNodes ? 'elevated' : 'quiet' : undefined} />
       </section>
 
       <section className="card nn-card">

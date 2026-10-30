@@ -24,6 +24,8 @@ const networkNoiseNodeStateSchema = new Schema(
     syncing: { type: Boolean, default: null },
     noiseScore: { type: Number, required: true, default: 0, min: 0, max: 100 },
     signalCount: { type: Number, required: true, default: 0, min: 0 },
+    // Legacy snapshots with signals have no verified signal-time flag.
+    signalTimingInvalid: { type: Boolean, default: false },
     activeSignalTypes: { type: [String], default: [] },
     lastCleanAt: { type: Date, default: null },
   },

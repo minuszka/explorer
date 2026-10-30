@@ -168,6 +168,42 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(result.recentSignals).toEqual([]);
   });
 
+  it.each([[1, 'firstSeenAt'], [1, 'lastSeenAt'], [2, 'firstSeenAt'], [2, 'lastSeenAt']] as const)(
+    'does not treat future %s report signal %s as a current node snapshot', async (version, futureField) => {
+    const now = Date.now();
+    const recent = new Date(now - 1000).toISOString();
+    const future = new Date(now + 3600000).toISOString();
+    const source = payload({ observedAt: recent, poseEvents: [], signals: [
+      { type: 'chainlock_conflict', fingerprint: 'future-signal', count: 1, firstSeenAt: recent, lastSeenAt: recent,
+        [futureField]: future },
+    ] });
+    const { poseEvents: _events, ...common } = source;
+    const report = version === 1 ? { ...common, schemaVersion: 1 as const } : source;
+    await networkNoiseService.ingest(report);
+    const result = await networkNoiseService.getSummary(24);
+    expect(result.summary).toMatchObject({ knownNodes: 1, reportingNodes: 0, staleNodes: 1, activeSignals: 0, chainAlerts: 0 });
+    expect(result.nodes[0].isStale).toBe(true);
+    expect(result.timeline).toEqual([]);
+    expect(result.recentSignals).toEqual([]);
+
+    await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1, signals: [] });
+    const recovered = await networkNoiseService.getSummary(24);
+    expect(recovered.summary).toMatchObject({ reportingNodes: 1, staleNodes: 0, activeSignals: 0, chainAlerts: 0 });
+    expect(recovered.nodes[0].isStale).toBe(false);
+  });
+
+  it('treats older snapshots with unverified signal times as stale until a new report', async () => {
+    const now = new Date().toISOString();
+    const report = payload({ observedAt: now, poseEvents: [], signals: [
+      { type: 'chainlock_conflict', fingerprint: 'legacy-signal', count: 1, firstSeenAt: now, lastSeenAt: now },
+    ] });
+    await networkNoiseService.ingest(report);
+    await NetworkNoiseNodeState.collection.updateOne({ nodeId: report.nodeId }, { $unset: { signalTimingInvalid: '' } });
+    expect((await networkNoiseService.getSummary(24)).summary).toMatchObject({ reportingNodes: 0, staleNodes: 1, chainAlerts: 0 });
+    await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1 });
+    expect((await networkNoiseService.getSummary(24)).summary).toMatchObject({ reportingNodes: 1, staleNodes: 0, chainAlerts: 1 });
+  });
+
   it('excludes future and expired signals from the timeline and recent evidence', async () => {
     const now = Date.now();
     const recent = new Date(now - 1000).toISOString();

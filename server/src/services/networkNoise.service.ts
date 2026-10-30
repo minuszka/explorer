@@ -83,7 +83,11 @@ class NetworkNoiseService {
       };
     }
 
+    const receivedAt = new Date();
     const observedAt = new Date(payload.observedAt);
+    const signalTimingInvalid = payload.signals.some((signal) =>
+      new Date(signal.firstSeenAt) > receivedAt || new Date(signal.lastSeenAt) > receivedAt
+    );
     const expiresAt = new Date(
       observedAt.getTime() + config.networkNoise.observationTtlDays * 24 * 60 * 60 * 1000
     );
@@ -153,6 +157,7 @@ class NetworkNoiseService {
       syncing: payload.snapshot.syncing ?? null,
       noiseScore,
       signalCount,
+      signalTimingInvalid,
       activeSignalTypes,
     };
     if (payload.signals.length === 0 && (payload.schemaVersion === 1 || payload.poseEvents.length === 0)) {
@@ -188,7 +193,8 @@ class NetworkNoiseService {
     const now = new Date();
     const from = new Date(now.getTime() - hours * 60 * 60 * 1000);
     const staleCutoff = new Date(now.getTime() - config.networkNoise.staleAfterMs);
-    const validSignalWindow = { lastSeenAt: { $gte: from, $lte: now }, observedAt: { $lte: now }, expiresAt: { $gt: now } };
+    const validSignalWindow = { firstSeenAt: { $lte: now }, lastSeenAt: { $gte: from, $lte: now },
+      observedAt: { $lte: now }, expiresAt: { $gt: now } };
 
     const [states, timelineRows, recentSignals] = await Promise.all([
       NetworkNoiseNodeState.find({})
@@ -250,8 +256,9 @@ class NetworkNoiseService {
         .lean(),
     ]);
 
-    const isFresh = (reportedAt: Date) => reportedAt >= staleCutoff && reportedAt <= now;
-    const reporting = states.filter((state) => isFresh(state.lastReportedAt));
+    const isFresh = (state: typeof states[number]) => state.lastReportedAt >= staleCutoff && state.lastReportedAt <= now
+      && (state.signalTimingInvalid === false || (state.signalTimingInvalid === undefined && state.signalCount === 0));
+    const reporting = states.filter(isFresh);
     const currentScore = reporting.reduce((max, state) => Math.max(max, state.noiseScore), 0);
     const activeSignals = reporting.reduce((total, state) => total + state.signalCount, 0);
     const chainAlerts = reporting.filter((state) =>
@@ -291,7 +298,7 @@ class NetworkNoiseService {
         signalCount: state.signalCount,
         activeSignalTypes: state.activeSignalTypes,
         lastCleanAt: state.lastCleanAt?.toISOString() ?? null,
-        isStale: !isFresh(state.lastReportedAt),
+        isStale: !isFresh(state),
       })),
       timeline: timelineRows,
       recentSignals: recentSignals.map((row) => ({
