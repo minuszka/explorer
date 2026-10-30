@@ -73,6 +73,8 @@ Also set these in production:
   - `NETWORK_NOISE_INGEST_TOKENS` (comma-separated `nodeId=token` entries; entries with tokens shorter than
     32 characters are ignored; at least one valid entry is required when the monitor is enabled)
   - `NETWORK_NOISE_OBSERVATION_TTL_DAYS`, `NETWORK_NOISE_STALE_AFTER_MS`
+  - `NETWORK_NOISE_CLOCK_SKEW_MS` (default `5000`, 0–60000; allowance for agent times ahead of the
+    batch's first arrival)
 - Provider lookup:
   - `GEOIP_ASN_MMDB`
   - `IP_API_ENABLED`

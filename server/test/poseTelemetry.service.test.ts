@@ -9,7 +9,7 @@ import { posePayload } from './fixtures/poseTelemetry';
 
 describe('structured telemetry persistence and retry boundaries', () => {
   beforeEach(() => {
-    vi.spyOn(networkNoiseBatchService, 'claim').mockResolvedValue('process');
+    vi.spyOn(networkNoiseBatchService, 'claim').mockResolvedValue({ status: 'process', firstReceivedAt: new Date(), timeLimit: Date.now() + 5000 });
     vi.spyOn(networkNoiseBatchService, 'complete').mockResolvedValue();
     vi.spyOn(PoseObservation, 'init').mockResolvedValue(PoseObservation);
     vi.spyOn(NetworkNoiseNodeState, 'init').mockResolvedValue(NetworkNoiseNodeState);
@@ -85,7 +85,7 @@ describe('structured telemetry persistence and retry boundaries', () => {
   });
 
   it('does not write structured events for a duplicate sequence', async () => {
-    vi.mocked(networkNoiseBatchService.claim).mockResolvedValue('duplicate');
+    vi.mocked(networkNoiseBatchService.claim).mockResolvedValue({ status: 'duplicate' });
     const result = await networkNoiseService.ingest(posePayload());
     expect(result).toEqual({ duplicate: true, acceptedSignals: 0, noiseScore: 0, acceptedPoseObservations: 0 });
     expect(PoseObservation.bulkWrite).not.toHaveBeenCalled();

@@ -256,7 +256,11 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
     expect((await getPoseChainData(query({ page: 2, limit: 1 }))).commitments[0].blockHeight).toBe(101);
     expect((await getPoseChainData(query({ quorumType: 2 }))).total).toBe(0);
     expect(await PoseObservation.countDocuments()).toBe(20);
+    // Reaching the claimed time does not verify it; only a valid repeated report does.
     await PoseObservation.updateOne({ nodeId: 'future-report' }, { $set: { observedAt: new Date(Date.now() - 1000) } });
+    expect((await getPoseChainData(query({ limit: 1, proTxHash: chainHash(2), quorumType: 7 }))).commitments[0])
+      .toMatchObject({ observerCount: 12 });
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'future-report', poseEvents: [event] }));
     const recovered = await getPoseChainData(query({ limit: 1, proTxHash: chainHash(2), quorumType: 7 }));
     expect(recovered.commitments[0]).toMatchObject({ observerCount: 13 });
     expect(recovered.commitments[0].members[1].observerCount).toBe(13);
@@ -597,6 +601,9 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
     expect(banAttributionDataSchema.safeParse(ban).success).toBe(true);
     expect(await PoseChainBlock.countDocuments()).toBe(countsBefore);
     await PoseObservation.updateOne({ nodeId: 'future-ban-observer' }, { $set: { observedAt: new Date(Date.now() - 1000) } });
+    expect(await getBanAttribution({ proTxHash: chainHash(2), banHeight: 100 }))
+      .toMatchObject({ status: 'verified', proof: { observerCount: 12 } });
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'future-ban-observer', poseEvents: [event] }));
     expect(await getBanAttribution({ proTxHash: chainHash(2), banHeight: 100 }))
       .toMatchObject({ status: 'verified', proof: { observerCount: 13 } });
     expect(await getBanAttribution({ proTxHash: chainHash(1), banHeight: 100 })).toMatchObject({

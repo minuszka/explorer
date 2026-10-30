@@ -5,13 +5,20 @@ import { isDuplicateKeyOnly, poseObservationIdentity } from '../domain/pose/pose
 import { PoseObservation } from '../models/PoseObservation';
 
 class PoseTelemetryService {
-  async ingest(payload: Extract<NetworkNoiseIngestPayload, { schemaVersion: 2 }>): Promise<number> {
+  /**
+   * `receivedAt` is the first arrival of the reporting batch, kept across retries.
+   * Report and event times after `timeLimit` (epoch ms) are not verified; reaching
+   * a claimed time later never verifies it.
+   */
+  async ingest(payload: Extract<NetworkNoiseIngestPayload, { schemaVersion: 2 }>, receivedAt = new Date(),
+    timeLimit = receivedAt.getTime() + config.networkNoise.clockSkewMs): Promise<number> {
     if (payload.poseEvents.length === 0) return 0;
     // Wait for the unique key index before serving the first concurrent batch.
     await PoseObservation.init();
-    const receivedAt = new Date();
     // Retain delayed log uploads for a full retention interval after arrival.
     const expiresAt = new Date(receivedAt.getTime() + config.networkNoise.poseObservationTtlDays * 86400000);
+    const observedAt = new Date(payload.observedAt);
+    const reportTimeVerified = observedAt.getTime() <= timeLimit;
     const operations = payload.poseEvents.map((event) => {
       const identity = poseObservationIdentity(payload.nodeId, event);
       return { updateOne: {
@@ -21,8 +28,9 @@ class PoseTelemetryService {
           ...event,
           sample: event.sample ?? null,
           eventAt: new Date(event.eventAt),
-          observedAt: new Date(payload.observedAt),
+          observedAt,
           receivedAt,
+          timeVerified: reportTimeVerified && new Date(event.eventAt).getTime() <= timeLimit,
           expiresAt,
           nodeId: payload.nodeId,
           nodeRole: payload.nodeRole,
@@ -46,12 +54,13 @@ class PoseTelemetryService {
     }
 
     // A future timestamp in the first report must not hide a later valid report
-    // of the same event. Repair only an invisible record, using both timestamps
-    // from the same non-future report; retain the first receipt and TTL.
-    const observedAt = new Date(payload.observedAt);
-    const corrections = observedAt <= receivedAt ? payload.poseEvents.flatMap((event) => {
+    // of the same event. Repair only an unverified record, using both timestamps
+    // from the same verified report; retain the first receipt and TTL. A record
+    // stored before the receipt-time check is repaired only while still future.
+    const now = new Date();
+    const corrections = reportTimeVerified ? payload.poseEvents.flatMap((event) => {
       const eventAt = new Date(event.eventAt);
-      if (eventAt > receivedAt) return [];
+      if (eventAt.getTime() > timeLimit) return [];
       const identity = poseObservationIdentity(payload.nodeId, event);
       return [{ updateOne: {
         filter: {
@@ -60,10 +69,11 @@ class PoseTelemetryService {
           quorumType: event.quorumType, quorumHash: event.quorumHash, proTxHash: event.proTxHash,
           previousPenalty: event.previousPenalty, penalty: event.penalty,
           poseBanHeight: event.poseBanHeight, memberValid: event.memberValid,
-          $or: [{ observedAt: { $gt: receivedAt } }, { eventAt: { $gt: receivedAt } }],
+          $or: [{ timeVerified: false }, { timeVerified: { $exists: false },
+            $or: [{ observedAt: { $gt: now } }, { eventAt: { $gt: now } }] }],
         },
         update: { $set: {
-          eventAt, observedAt, eventId: event.eventId, sample: event.sample ?? null,
+          eventAt, observedAt, timeVerified: true, eventId: event.eventId, sample: event.sample ?? null,
           nodeRole: payload.nodeRole, agentVersion: payload.agentVersion,
           walletVersion: payload.snapshot.walletVersion ?? null, sequence: payload.sequence,
           snapshotBlockHeight: payload.snapshot.blockHeight ?? null,
@@ -81,6 +91,8 @@ class PoseTelemetryService {
       eventAt: { $gte: new Date(now.getTime() - query.hours * 3600000), $lte: now },
       observedAt: { $lte: now },
       expiresAt: { $gt: now },
+      // Records stored before the receipt-time check keep the previous rule.
+      timeVerified: { $ne: false },
     };
     if (query.kind !== undefined) match.kind = query.kind;
     if (query.quorumType !== undefined) match.quorumType = query.quorumType;

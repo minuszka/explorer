@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { NetworkNoiseIngestPayload } from '@defcon/shared/dist/contracts';
+import { config } from '../config';
 import { NetworkNoiseBaseline, NetworkNoiseBatch } from '../models/NetworkNoiseBatch';
 import { NetworkNoiseNodeState } from '../models/NetworkNoiseNodeState';
 import { isDuplicateKeyOnly } from '../domain/pose/poseTelemetry';
@@ -21,7 +22,13 @@ function digest(payload: NetworkNoiseIngestPayload): string {
 }
 
 export const networkNoiseBatchService = {
-  async claim(payload: NetworkNoiseIngestPayload): Promise<'duplicate' | 'process'> {
+  /**
+   * `receivedAt` is this request's arrival. A processed batch reports its stored
+   * first arrival and time limit (epoch ms) for checking agent times.
+   */
+  async claim(payload: NetworkNoiseIngestPayload, receivedAt: Date): Promise<
+    { status: 'duplicate' } | { status: 'process'; firstReceivedAt: Date; timeLimit: number }
+  > {
     await Promise.all([NetworkNoiseBaseline.init(), NetworkNoiseBatch.init()]);
     // Every writer establishes the immutable baseline before it can advance state.
     const current = await NetworkNoiseNodeState.findOne({ nodeId: payload.nodeId })
@@ -36,14 +43,15 @@ export const networkNoiseBatchService = {
       baseline = await NetworkNoiseBaseline.findOne({ nodeId: payload.nodeId }).lean();
     }
     if (!baseline) throw new Error('Network noise sequence baseline unavailable');
-    if (payload.sequence <= baseline.legacySequence) return 'duplicate';
+    if (payload.sequence <= baseline.legacySequence) return { status: 'duplicate' };
 
     const key = { nodeId: payload.nodeId, sequence: payload.sequence };
     const batchDigest = digest(payload);
     let batch;
     try {
       batch = await NetworkNoiseBatch.findOneAndUpdate(key,
-        { $setOnInsert: { digest: batchDigest, complete: false } },
+        { $setOnInsert: { digest: batchDigest, complete: false, firstReceivedAt: receivedAt,
+          timeLimitAt: new Date(receivedAt.getTime() + config.networkNoise.clockSkewMs) } },
         { upsert: true, new: true }).lean();
     } catch (error) {
       if (!isDuplicateKeyOnly(error)) throw error;
@@ -51,7 +59,15 @@ export const networkNoiseBatchService = {
     }
     if (!batch) throw new Error('Network noise batch receipt unavailable');
     if (batch.digest !== batchDigest) throw new NetworkNoiseSequenceConflict('Sequence already belongs to a different batch');
-    return batch.complete ? 'duplicate' : 'process';
+    if (batch.complete) return { status: 'duplicate' };
+    // The request that created the receipt fixed the batch's arrival and time
+    // limit; retries and concurrent identical requests reuse both, so every
+    // verdict for the batch agrees, even after a restart with another allowance.
+    // A receipt from an earlier version has no limit: no time is verified.
+    if (!batch.firstReceivedAt || !batch.timeLimitAt) {
+      return { status: 'process', firstReceivedAt: batch.createdAt, timeLimit: Number.NEGATIVE_INFINITY };
+    }
+    return { status: 'process', firstReceivedAt: batch.firstReceivedAt, timeLimit: batch.timeLimitAt.getTime() };
   },
 
   async complete(payload: NetworkNoiseIngestPayload): Promise<void> {

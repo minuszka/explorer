@@ -75,7 +75,8 @@ class NetworkNoiseService {
     acceptedPoseObservations?: number;
   }> {
     const receivedAt = new Date();
-    if (await networkNoiseBatchService.claim(payload) === 'duplicate') {
+    const batch = await networkNoiseBatchService.claim(payload, receivedAt);
+    if (batch.status === 'duplicate') {
       return {
         duplicate: true,
         acceptedSignals: 0,
@@ -85,8 +86,13 @@ class NetworkNoiseService {
     }
 
     const observedAt = new Date(payload.observedAt);
+    // Check agent times against the limit stored with the batch's receipt (first
+    // arrival plus a bounded clock-skew allowance), never against a retry.
+    const timeLimit = batch.timeLimit;
+    const timeVerified = (value: string) => new Date(value).getTime() <= timeLimit;
+    const reportTimeVerified = timeVerified(payload.observedAt);
     const signalTimingInvalid = payload.signals.some((signal) =>
-      new Date(signal.firstSeenAt) > receivedAt || new Date(signal.lastSeenAt) > receivedAt
+      !timeVerified(signal.firstSeenAt) || !timeVerified(signal.lastSeenAt)
     );
     const signalIntervalVerified = payload.signals.every((signal) =>
       new Date(signal.firstSeenAt) <= new Date(signal.lastSeenAt)
@@ -111,6 +117,8 @@ class NetworkNoiseService {
               walletVersion: payload.snapshot.walletVersion ?? null,
               sequence: payload.sequence,
               observedAt,
+              receivedAt: batch.firstReceivedAt,
+              timeVerified: reportTimeVerified && timeVerified(signal.firstSeenAt) && timeVerified(signal.lastSeenAt),
               signalType: signal.type,
               fingerprint: signal.fingerprint,
               count: signal.count,
@@ -141,7 +149,7 @@ class NetworkNoiseService {
     // Complete both stores before advancing the sequence. A failed PoSe write
     // remains retryable; all already written observations have stable keys.
     const acceptedPoseObservations = payload.schemaVersion === 2
-      ? await poseTelemetryService.ingest(payload) : undefined;
+      ? await poseTelemetryService.ingest(payload, batch.firstReceivedAt, batch.timeLimit) : undefined;
 
     const stateUpdate: Record<string, unknown> = {
       nodeRole: payload.nodeRole,
@@ -150,7 +158,7 @@ class NetworkNoiseService {
       agentVersion: payload.agentVersion,
       lastSequence: payload.sequence,
       lastReportedAt: observedAt,
-      reportTimeVerified: observedAt <= receivedAt,
+      reportTimeVerified,
       blockHeight: payload.snapshot.blockHeight ?? null,
       bestBlockHash: payload.snapshot.bestBlockHash ?? null,
       chainLockHeight: payload.snapshot.chainLockHeight ?? null,
@@ -171,8 +179,11 @@ class NetworkNoiseService {
 
     // A concurrent newer batch may have committed after the initial read.
     // Ensure the unique node key exists before relying on the upsert race guard.
+    // A retry rewrites the snapshot of its own sequence with the same verdict (or
+    // an unverified one for an earlier version's receipt); a newer one is kept.
+    // Rows an earlier version wrote without a check are not re-judged.
     await NetworkNoiseNodeState.init();
-    const stateFilter = { nodeId: payload.nodeId, lastSequence: { $lt: payload.sequence } };
+    const stateFilter = { nodeId: payload.nodeId, lastSequence: { $lte: payload.sequence } };
     try {
       await NetworkNoiseNodeState.updateOne(stateFilter, {
         $set: stateUpdate,
@@ -198,8 +209,11 @@ class NetworkNoiseService {
     const now = new Date();
     const from = new Date(now.getTime() - hours * 60 * 60 * 1000);
     const staleCutoff = new Date(now.getTime() - config.networkNoise.staleAfterMs);
+    // Rows stored before the receipt-time check have no flag and keep the
+    // previous time rule until they expire.
     const validSignalWindow = { firstSeenAt: { $lte: now }, lastSeenAt: { $gte: from, $lte: now },
-      observedAt: { $lte: now }, expiresAt: { $gt: now }, $expr: { $lte: ['$firstSeenAt', '$lastSeenAt'] } };
+      observedAt: { $lte: now }, expiresAt: { $gt: now }, timeVerified: { $ne: false },
+      $expr: { $lte: ['$firstSeenAt', '$lastSeenAt'] } };
 
     const [states, timelineRows, recentSignals] = await Promise.all([
       NetworkNoiseNodeState.find({})

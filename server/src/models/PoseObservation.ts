@@ -17,6 +17,8 @@ const poseObservationSchema = new Schema({
   eventAt: { type: Date, required: true, index: true },
   observedAt: { type: Date, required: true },
   receivedAt: { type: Date, required: true },
+  // Report and event times checked against the batch receipt; older records have no flag.
+  timeVerified: { type: Boolean },
   eventBlockHeight: { type: Number, default: null },
   eventBlockHash: { type: String, default: null },
   quorumType: { type: Number, default: null },

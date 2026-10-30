@@ -14,6 +14,9 @@ const networkNoiseObservationSchema = new Schema(
     walletVersion: { type: String, default: null, index: true },
     sequence: { type: Number, required: true },
     observedAt: { type: Date, required: true, index: true },
+    // First receipt of the batch and its time check; older rows have neither.
+    receivedAt: { type: Date },
+    timeVerified: { type: Boolean },
     signalType: { type: String, required: true, trim: true, index: true },
     fingerprint: { type: String, required: true, trim: true, index: true },
     count: { type: Number, required: true, min: 1 },

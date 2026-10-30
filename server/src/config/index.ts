@@ -354,6 +354,11 @@ export function loadConfig(env: Environment = process.env) {
         min: 60000,
         max: 3600000,
       }),
+      // Allowance for an agent clock running ahead of the server's first receipt.
+      clockSkewMs: parseIntEnv(env, 'NETWORK_NOISE_CLOCK_SKEW_MS', 5000, issues, {
+        min: 0,
+        max: 60000,
+      }),
       poseObservationTtlDays: parseIntEnv(env, 'POSE_OBSERVATION_TTL_DAYS', 365, issues, {
         min: 1,
         max: 1825,

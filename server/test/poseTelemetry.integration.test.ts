@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { poseObservedEventsApiResponseSchema, poseEventsQuerySchema } from '@defcon/shared/dist/contracts';
+import { config } from '../src/config';
 import { PoseObservation } from '../src/models/PoseObservation';
 import { NetworkNoiseNodeState } from '../src/models/NetworkNoiseNodeState';
 import { NetworkNoiseObservation } from '../src/models/NetworkNoiseObservation';
@@ -76,6 +77,299 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     await networkNoiseService.ingest(payload({ sequence: 12, poseEvents: [] }));
     expect(await networkNoiseService.ingest(late)).toMatchObject({ duplicate: false, acceptedPoseObservations: 1 });
     expect((await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())?.lastSequence).toBe(12);
+  });
+
+  it.each([1, 2] as const)('keeps a future v%i report stale when its interrupted batch is retried after the clock catches up', async (version) => {
+    const now = Date.now();
+    const recent = new Date(now - 1000).toISOString();
+    const source = payload({ observedAt: new Date(now + 60000).toISOString(), poseEvents: [], signals: [
+      { type: 'chainlock_conflict', fingerprint: 'interrupted-future', count: 1, firstSeenAt: recent, lastSeenAt: recent },
+    ] });
+    const { poseEvents: _events, ...common } = source;
+    const report = version === 1 ? { ...common, schemaVersion: 1 as const } : source;
+    const write = vi.spyOn(NetworkNoiseObservation, 'bulkWrite').mockRejectedValueOnce(new Error('interrupted'));
+    try {
+      await expect(networkNoiseService.ingest(report)).rejects.toThrow('interrupted');
+      write.mockRestore();
+      vi.setSystemTime(now + 61000);
+      await networkNoiseService.ingest(report);
+      const summary = await networkNoiseService.getSummary();
+      expect(summary.summary).toMatchObject({ reportingNodes: 0, staleNodes: 1, activeSignals: 0, chainAlerts: 0 });
+      await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1,
+        observedAt: new Date(now + 60000).toISOString(), signals: [] });
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 1, staleNodes: 0 });
+    } finally {
+      write.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a future signal stale after an interrupted batch is retried', async () => {
+    const now = Date.now();
+    const report = payload({ observedAt: new Date(now - 1000).toISOString(), poseEvents: [], signals: [
+      { type: 'chainlock_conflict', fingerprint: 'interrupted-future-signal', count: 1,
+        firstSeenAt: new Date(now + 60000).toISOString(), lastSeenAt: new Date(now + 60000).toISOString() },
+    ] });
+    const write = vi.spyOn(NetworkNoiseObservation, 'bulkWrite').mockRejectedValueOnce(new Error('interrupted'));
+    try {
+      await expect(networkNoiseService.ingest(report)).rejects.toThrow('interrupted');
+      write.mockRestore();
+      vi.setSystemTime(now + 61000);
+      await networkNoiseService.ingest(report);
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 0, staleNodes: 1, chainAlerts: 0 });
+    } finally {
+      write.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  // Every reader must agree on one rule: a time later than the batch's first
+  // receipt (plus the clock-skew tolerance) is never verified, even after the
+  // clock catches up or the batch is retried.
+  describe.each([
+    ['in the past', -1000, true],
+    ['ahead within the clock-skew tolerance', 2000, true],
+    ['in the future', 60000, false],
+  ] as const)('a timestamp %s', (_label, offset, verified) => {
+    it.each([
+      ['report', 'direct'], ['report', 'retry'], ['signal', 'direct'],
+      ['signal', 'retry'], ['event', 'direct'], ['event', 'retry'],
+    ] as const)('in the %s gives every reader the same result (%s)', async (field, attempt) => {
+      const now = Date.now();
+      const past = new Date(now - 1000).toISOString();
+      const shifted = new Date(now + offset).toISOString();
+      const report = payload({
+        observedAt: field === 'report' ? shifted : past,
+        signals: [{ type: 'chainlock_conflict', fingerprint: `matrix-${field}`, count: 1,
+          firstSeenAt: field === 'signal' ? shifted : past, lastSeenAt: field === 'signal' ? shifted : past }],
+        poseEvents: [poseEvent({ eventAt: field === 'event' ? shifted : past })],
+      });
+      const write = vi.spyOn(NetworkNoiseObservation, 'bulkWrite');
+      try {
+        if (attempt === 'retry') {
+          write.mockRejectedValueOnce(new Error('interrupted'));
+          await expect(networkNoiseService.ingest(report)).rejects.toThrow('interrupted');
+          vi.setSystemTime(now + 61000);
+          await networkNoiseService.ingest(report);
+        } else {
+          await networkNoiseService.ingest(report);
+          vi.setSystemTime(now + 61000);
+        }
+        const snapshotVerified = verified || field === 'event';
+        const caughtUp = await networkNoiseService.getSummary();
+        expect(caughtUp.summary).toMatchObject({ reportingNodes: snapshotVerified ? 1 : 0, chainAlerts: snapshotVerified ? 1 : 0 });
+        expect(caughtUp.recentSignals).toHaveLength(snapshotVerified ? 1 : 0);
+        expect(caughtUp.timeline).toHaveLength(snapshotVerified ? 1 : 0);
+        expect((await poseTelemetryService.getEvents(query())).total).toBe(verified || field === 'signal' ? 1 : 0);
+
+        // A later valid batch restores the snapshot and repairs the PoSe record,
+        // but never promotes the unverified signal row it does not repeat.
+        const valid = new Date(now + 60000).toISOString();
+        await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1, observedAt: valid, signals: [],
+          poseEvents: [poseEvent({ eventAt: valid })] });
+        const replaced = await networkNoiseService.getSummary();
+        expect(replaced.summary).toMatchObject({ reportingNodes: 1 });
+        expect(replaced.recentSignals).toHaveLength(snapshotVerified ? 1 : 0);
+        expect((await poseTelemetryService.getEvents(query())).total).toBe(1);
+      } finally {
+        write.mockRestore();
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  it('anchors a retry to the first arrival even when the receipt is written later', async () => {
+    const now = Date.now();
+    const recent = new Date(now - 1000).toISOString();
+    // Outside the allowance from the first arrival, but inside it when measured
+    // from a receipt written one second later.
+    const report = payload({ observedAt: new Date(now + config.networkNoise.clockSkewMs + 500).toISOString(),
+      signals: [{ type: 'chainlock_conflict', fingerprint: 'late-receipt', count: 1, firstSeenAt: recent, lastSeenAt: recent }] });
+    const original = NetworkNoiseBatch.findOneAndUpdate.bind(NetworkNoiseBatch) as (...args: unknown[]) => unknown;
+    const receipt = vi.spyOn(NetworkNoiseBatch, 'findOneAndUpdate').mockImplementationOnce(((...args: unknown[]) => {
+      vi.setSystemTime(now + 1000);
+      return original(...args);
+    }) as never);
+    const write = vi.spyOn(NetworkNoiseObservation, 'bulkWrite').mockRejectedValueOnce(new Error('interrupted'));
+    try {
+      vi.setSystemTime(now);
+      await expect(networkNoiseService.ingest(report)).rejects.toThrow('interrupted');
+      vi.setSystemTime(now + 61000);
+      await networkNoiseService.ingest(report);
+      const summary = await networkNoiseService.getSummary();
+      expect(summary.summary).toMatchObject({ reportingNodes: 0, chainAlerts: 0 });
+      expect(summary.recentSignals).toHaveLength(0);
+      expect((await poseTelemetryService.getEvents(query())).total).toBe(0);
+    } finally {
+      receipt.mockRestore();
+      write.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('gives concurrent identical claims and later retries one immutable time anchor', async () => {
+    const report = payload({ poseEvents: [] });
+    const now = Date.now();
+    const arrivals = [now - 1000, now - 2000];
+    const results = await Promise.all(arrivals.map((arrival) => networkNoiseBatchService.claim(report, new Date(arrival))));
+    const anchors = results.map((result) => result.status === 'process' ? result.firstReceivedAt.getTime() : NaN);
+    expect(anchors[0]).toBe(anchors[1]);
+    expect(arrivals).toContain(anchors[0]);
+    const timeLimit = anchors[0] + config.networkNoise.clockSkewMs;
+    expect(results).toEqual([{ status: 'process', firstReceivedAt: new Date(anchors[0]), timeLimit },
+      { status: 'process', firstReceivedAt: new Date(anchors[0]), timeLimit }]);
+    // Even an earlier arrival claimed later cannot move the anchor.
+    expect(await networkNoiseBatchService.claim(report, new Date(now - 3000)))
+      .toEqual({ status: 'process', firstReceivedAt: new Date(anchors[0]), timeLimit });
+  });
+
+  it('keeps the time limit stored with a batch when the clock-skew allowance changes before its retry', async () => {
+    const allowance = config.networkNoise.clockSkewMs;
+    const now = Date.now();
+    const recent = new Date(now - 1000).toISOString();
+    // Verified under the allowance in force at the first arrival, not under a zero allowance.
+    const report = payload({ observedAt: new Date(now + 2000).toISOString(), signals: [{ type: 'chainlock_conflict',
+      fingerprint: 'allowance-change', count: 1, firstSeenAt: recent, lastSeenAt: recent }] });
+    const write = vi.spyOn(PoseObservation, 'bulkWrite').mockRejectedValueOnce(new Error('interrupted'));
+    try {
+      vi.setSystemTime(now);
+      config.networkNoise.clockSkewMs = 5000;
+      await expect(networkNoiseService.ingest(report)).rejects.toThrow('interrupted');
+      expect((await NetworkNoiseObservation.findOne({ nodeId: report.nodeId }).lean())?.timeVerified).toBe(true);
+      config.networkNoise.clockSkewMs = 0;
+      vi.setSystemTime(now + 61000);
+      await networkNoiseService.ingest(report);
+      expect((await NetworkNoiseNodeState.findOne({ nodeId: report.nodeId }).lean())?.reportTimeVerified).toBe(true);
+      expect((await NetworkNoiseObservation.findOne({ nodeId: report.nodeId }).lean())?.timeVerified).toBe(true);
+      expect((await PoseObservation.findOne({ nodeId: report.nodeId }).lean())?.timeVerified).toBe(true);
+    } finally {
+      config.networkNoise.clockSkewMs = allowance;
+      write.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps every verdict of a batch on the anchor stored by its first claim', async () => {
+    const now = Date.now();
+    const recent = new Date(now - 1000).toISOString();
+    const report = payload({ observedAt: new Date(now + config.networkNoise.clockSkewMs + 500).toISOString(),
+      signals: [{ type: 'chainlock_conflict', fingerprint: 'concurrent-anchor', count: 1, firstSeenAt: recent, lastSeenAt: recent }] });
+    const original = NetworkNoiseBatch.findOneAndUpdate.bind(NetworkNoiseBatch) as
+      (...args: unknown[]) => { lean: () => Promise<unknown> };
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let reached!: () => void;
+    const held = new Promise<void>((resolve) => { reached = resolve; });
+    const receipt = vi.spyOn(NetworkNoiseBatch, 'findOneAndUpdate').mockImplementationOnce(((...args: unknown[]) => ({
+      lean: async () => { reached(); await gate; return original(...args).lean(); },
+    })) as never);
+    try {
+      // A arrives first but reaches the receipt only after an identical B has finished.
+      vi.setSystemTime(now);
+      const first = networkNoiseService.ingest(report);
+      await held;
+      vi.setSystemTime(now + 1000);
+      expect(await networkNoiseService.ingest(report)).toMatchObject({ duplicate: false });
+      release();
+      expect(await first).toMatchObject({ duplicate: true });
+      const stored = await NetworkNoiseBatch.findOne({ nodeId: report.nodeId, sequence: report.sequence }).lean();
+      const verified = new Date(report.observedAt).getTime()
+        <= stored!.firstReceivedAt!.getTime() + config.networkNoise.clockSkewMs;
+      expect((await NetworkNoiseNodeState.findOne({ nodeId: report.nodeId }).lean())?.reportTimeVerified).toBe(verified);
+      expect((await NetworkNoiseObservation.findOne({ nodeId: report.nodeId }).lean())?.timeVerified).toBe(verified);
+      expect((await PoseObservation.findOne({ nodeId: report.nodeId }).lean())?.timeVerified).toBe(verified);
+    } finally {
+      receipt.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a valid repeat of an older-version observation when that older batch is retried later', async () => {
+    const report = payload({ observedAt: new Date(Date.now() - 1000).toISOString() });
+    const complete = vi.spyOn(NetworkNoiseBatch, 'updateOne').mockRejectedValueOnce(new Error('receipt write interrupted'));
+    try {
+      await expect(networkNoiseService.ingest(report)).rejects.toThrow('receipt write interrupted');
+      complete.mockRestore();
+      // Emulate an older version: no stored anchor or limit, no row-level time check.
+      await NetworkNoiseBatch.collection.updateOne({ nodeId: report.nodeId, sequence: report.sequence },
+        { $unset: { firstReceivedAt: '', timeLimitAt: '' } });
+      await PoseObservation.collection.updateMany({}, { $unset: { timeVerified: '' } });
+      // A newer valid batch repeats the same observation before the older batch is retried.
+      await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1 });
+      await networkNoiseService.ingest(report);
+      expect((await poseTelemetryService.getEvents(query())).total).toBe(1);
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 1 });
+    } finally {
+      complete.mockRestore();
+    }
+  });
+
+  it('marks the snapshot of an older-version batch unverified on retry and keeps its earlier rows on the previous rule', async () => {
+    const recent = new Date(Date.now() - 1000).toISOString();
+    const report = payload({ observedAt: recent, signals: [{ type: 'chainlock_conflict', fingerprint: 'older-version',
+      count: 1, firstSeenAt: recent, lastSeenAt: recent }] });
+    const complete = vi.spyOn(NetworkNoiseBatch, 'updateOne').mockRejectedValueOnce(new Error('receipt write interrupted'));
+    try {
+      await expect(networkNoiseService.ingest(report)).rejects.toThrow('receipt write interrupted');
+      // Emulate an older version: no stored anchor or limit, no row-level time check.
+      await NetworkNoiseBatch.collection.updateOne({ nodeId: report.nodeId, sequence: report.sequence },
+        { $unset: { firstReceivedAt: '', timeLimitAt: '' } });
+      await NetworkNoiseObservation.collection.updateMany({}, { $unset: { timeVerified: '', receivedAt: '' } });
+      await PoseObservation.collection.updateMany({}, { $unset: { timeVerified: '' } });
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 1, chainAlerts: 1 });
+      await networkNoiseService.ingest(report);
+      const retried = await networkNoiseService.getSummary();
+      expect(retried.summary).toMatchObject({ reportingNodes: 0, chainAlerts: 0 });
+      // Rows written without a check are not re-judged; like every such row they
+      // follow the previous time rule until they expire.
+      expect(retried.recentSignals).toHaveLength(1);
+      expect((await poseTelemetryService.getEvents(query())).total).toBe(1);
+      await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1, signals: [] });
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 1 });
+    } finally {
+      complete.mockRestore();
+    }
+  });
+
+  it('cannot verify times on a retry of a receipt created before the first-arrival record, even after a clock rollback', async () => {
+    const now = Date.now();
+    const report = payload({ observedAt: new Date(now - 60000).toISOString() });
+    const write = vi.spyOn(PoseObservation, 'bulkWrite').mockRejectedValueOnce(new Error('interrupted'));
+    try {
+      await expect(networkNoiseService.ingest(report)).rejects.toThrow('interrupted');
+      await NetworkNoiseBatch.collection.updateOne({ nodeId: report.nodeId, sequence: report.sequence },
+        { $unset: { firstReceivedAt: '', timeLimitAt: '' } });
+      // The server clock was set back before the retry; classification must not depend on it.
+      vi.setSystemTime(now - 20000);
+      await networkNoiseService.ingest(report);
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 0, staleNodes: 1 });
+      expect((await poseTelemetryService.getEvents(query())).total).toBe(0);
+      await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1 });
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 1, staleNodes: 0 });
+      expect((await poseTelemetryService.getEvents(query())).total).toBe(1);
+    } finally {
+      write.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the previous time rule for stored rows that predate the receipt-time check', async () => {
+    const now = Date.now();
+    const recent = new Date(now - 1000).toISOString();
+    await networkNoiseService.ingest(payload({ signals: [{ type: 'peer_churn', fingerprint: 'legacy-row', count: 1,
+      firstSeenAt: recent, lastSeenAt: recent }] }));
+    const future = new Date(now + 60000);
+    await NetworkNoiseObservation.collection.updateMany({}, { $unset: { timeVerified: '', receivedAt: '' }, $set: { observedAt: future } });
+    await PoseObservation.collection.updateMany({}, { $unset: { timeVerified: '' }, $set: { observedAt: future } });
+    try {
+      expect((await networkNoiseService.getSummary()).recentSignals).toHaveLength(0);
+      expect((await poseTelemetryService.getEvents(query())).total).toBe(0);
+      vi.setSystemTime(now + 61000);
+      expect((await networkNoiseService.getSummary()).recentSignals).toHaveLength(1);
+      expect((await poseTelemetryService.getEvents(query())).total).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('retries when marking the receipt complete fails after the snapshot write', async () => {
@@ -204,8 +498,8 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     const now = Date.now();
     const report = payload({ observedAt: new Date(now + 60000).toISOString(), poseEvents: [], signals: [] });
     const originalClaim = networkNoiseBatchService.claim;
-    const claim = vi.spyOn(networkNoiseBatchService, 'claim').mockImplementation(async (batch) => {
-      const result = await originalClaim(batch);
+    const claim = vi.spyOn(networkNoiseBatchService, 'claim').mockImplementation(async (batch, receivedAt) => {
+      const result = await originalClaim(batch, receivedAt);
       vi.setSystemTime(now + 61000);
       return result;
     });
@@ -300,7 +594,7 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(result.timeline.map((entry) => entry.signalType)).toEqual(['fresh_signal']);
   });
 
-  it('excludes future-dated reports from PoSe observer counts until their report time', async () => {
+  it('excludes future-dated reports from PoSe observer counts until a valid report repeats them', async () => {
     const now = Date.now();
     const first = payload({ observedAt: new Date(now - 1000).toISOString() });
     const future = new Date(now + 3600000).toISOString();
@@ -312,7 +606,10 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(data.events[0]).toMatchObject({ observerCount: 1, observationCount: 1,
       observerNodeIds: [first.nodeId], lastReportedAt: first.observedAt, canonicalStatus: 'unverified' });
     expect(await PoseObservation.countDocuments()).toBe(2);
+    // Reaching the claimed time does not verify it; only a valid repeated report does.
     await PoseObservation.updateOne({ nodeId: 'future-node' }, { $set: { observedAt: new Date(now - 500) } });
+    expect((await poseTelemetryService.getEvents(query())).events[0]).toMatchObject({ observerCount: 1 });
+    await poseTelemetryService.ingest({ ...first, nodeId: 'future-node' });
     const recovered = await poseTelemetryService.getEvents(query());
     expect(recovered.events[0]).toMatchObject({ observerCount: 2, observationCount: 2 });
   });

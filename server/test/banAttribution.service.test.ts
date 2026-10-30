@@ -33,7 +33,7 @@ describe('BANNED_BY read safety', () => {
     expect(mocks.observers.mock.calls[0]).toEqual([[{ $match: {
       eventBlockHash: chainHash(100), eventBlockHeight: 100, quorumType: 7, quorumHash: chainHash(900), proTxHash: chainHash(2),
       expiresAt: { $gt: attributionNow }, eventAt: { $lte: attributionNow }, observedAt: { $lte: attributionNow },
-      kind: { $in: ['penalty_change', 'ban', 'dkg_member'] },
+      timeVerified: { $ne: false }, kind: { $in: ['penalty_change', 'ban', 'dkg_member'] },
     } }, { $group: { _id: '$nodeId', expiresAt: { $max: '$expiresAt' } } }]]);
   });
   it.each(['disabled', 'unavailable', 'collecting', 'stale', 'future', 'attribution_disabled', 'before', 'after'])(

@@ -45,11 +45,19 @@ The server handles a request in this order:
 2. It validates the body against the schema below. On failure it returns `400` with code `BAD_REQUEST` and the first validation message.
 3. It looks up the token configured for the payload's `nodeId` and compares it with the bearer token in constant time. A missing, unknown, or wrong token returns `401` with code `UNAUTHORIZED`.
 4. On the first request for a node after this update, the existing last sequence is fixed as a legacy baseline. Sequences at or below that baseline return `200` with `duplicate: true`; their original contents are not available for comparison.
-5. Above the baseline, the server stores a permanent receipt keyed by node and sequence with a digest of the normalized batch. An already completed identical batch returns `200` with `duplicate: true`. A different payload with the same node and sequence returns `409` with code `SEQUENCE_CONFLICT`.
-6. A previously unseen or incomplete batch above the baseline is processed and returns `202`. Observations use their existing idempotent keys, and the node snapshot only advances to a higher sequence. This permits recovery of a delayed batch without rewinding the snapshot.
+5. Above the baseline, the server stores a permanent receipt keyed by node and sequence with a digest of the normalized batch, the arrival of the request that created it (`firstReceivedAt`), and the batch's time limit (`timeLimitAt`: that arrival plus the `NETWORK_NOISE_CLOCK_SKEW_MS` then in force). Neither changes afterwards: retries and concurrent identical requests, including one that arrived earlier but reached the receipt later, use the same values. An already completed identical batch returns `200` with `duplicate: true`. A different payload with the same node and sequence returns `409` with code `SEQUENCE_CONFLICT`.
+6. A previously unseen or incomplete batch above the baseline is processed and returns `202`. Observations use their existing idempotent keys, and the node snapshot is written only for the same or a higher sequence. This permits recovery of a delayed batch without rewinding the snapshot.
 
 Concurrent identical batches can both process; their observation keys remain
 idempotent. A failed or interrupted batch can be retried after a newer batch.
+Agent times are checked against the batch's stored time limit, so every write
+for a batch reaches the same verdict, even if the allowance changes before a
+retry. A time after that limit is never verified, even after the clock passes
+it. An incomplete receipt created before the limit was recorded cannot show when
+its batch arrived: a retry stores that batch's snapshot and any new rows as
+unverified, and a later valid batch restores the node snapshot. Rows an earlier
+version already wrote without a check are not re-judged; like all such rows,
+they keep the previous time rule until they expire.
 Receipts have no TTL: deleting them would allow an old batch to be accepted again,
 so operators must account for storage growth. The legacy baseline and receipts
 must be preserved together with node state. Run one compatible server version
@@ -225,9 +233,11 @@ server-receipt times, and explicitly named `snapshotBlockHeight` /
 `snapshotBlockHash`. It stores no reported IP or peer IP. Its independent
 `POSE_OBSERVATION_TTL_DAYS` retention defaults to 365 days (range 1–1825), measured
 from the first server receipt. Changing retention affects new records only;
-replays do not extend expiry. When the stored event or report time is still in
-the future, a later report of the same event can replace those timestamps and
-report metadata only if both times in that single report are not in the future.
+replays do not extend expiry. Each record notes whether its report and event
+times passed the receipt check (`timeVerified`). When they did not, a later
+report of the same event can replace those timestamps and report metadata only
+if both times in that single report pass the check. Records stored before the
+check are repaired only while a time is still in the future.
 The original receipt time and expiry remain unchanged. A visible first report
 is not replaced; a different incomplete event sharing a local ID is not merged.
 
@@ -254,10 +264,11 @@ than clamped: `hours` 1–8760 (default 24), `page` 1–10000 (default 1), `limi
 `eventBlockHash` and `quorumHash`. Block/quorum hashes normalize to lowercase;
 all supplied anchors must match exactly. Anchor matches remain unverified log
 claims, including when opened from a verified BANNED_BY panel. The window uses
-the source `eventAt`, excludes future events and future-dated batch `observedAt`
-values, and excludes expired records even before MongoDB's TTL cleanup. Future-dated
-reports remain stored and can appear once their report time has passed, if still
-within the event window and retention period. Pages sort by latest event time,
+the source `eventAt`, excludes future events, future-dated batch `observedAt`
+values and records whose times failed the receipt check, and excludes expired
+records even before MongoDB's TTL cleanup. A record that failed the check stays
+hidden after its claimed time passes; a later valid report of the same event
+repairs it. Pages sort by latest event time,
 then event key; they can move as new reports arrive.
 
 The response envelope is `{ "success": true, "data": ... }`. Data contains
@@ -280,13 +291,13 @@ stage. Legacy samples are not parsed or retrospectively promoted to v2 evidence.
 
 For each accepted batch:
 
-- **Observations** (`networknoiseobservations`). Each signal becomes one document. It holds the signal fields, the node's `nodeId`, role, reported `ip` and wallet version, and the batch's chain snapshot (height, best hash, ChainLock height and hash). The document key is `sha256("<nodeId>:<sequence>:<type>:<fingerprint>")`, and the server inserts it only if the key is new, so a repeated signal within one batch is stored once. Peer IPs are deduplicated. `expiresAt` is set to `observedAt` plus `NETWORK_NOISE_OBSERVATION_TTL_DAYS`, and a MongoDB TTL index deletes the document after that time. The TTL is fixed when the document is inserted, so changing the setting affects only new observations.
+- **Observations** (`networknoiseobservations`). Each signal becomes one document. It holds the signal fields, the node's `nodeId`, role, reported `ip` and wallet version, and the batch's chain snapshot (height, best hash, ChainLock height and hash). The document key is `sha256("<nodeId>:<sequence>:<type>:<fingerprint>")`, and the server inserts it only if the key is new, so a repeated signal within one batch is stored once. Peer IPs are deduplicated. `expiresAt` is set to `observedAt` plus `NETWORK_NOISE_OBSERVATION_TTL_DAYS`, and a MongoDB TTL index deletes the document after that time. The TTL is fixed when the document is inserted, so changing the setting affects only new observations. Each document also records the batch's first arrival (`receivedAt`) and whether its report and signal times passed the receipt check (`timeVerified`); documents stored before this check have neither field.
 - **Node state** (`networknoisenodestates`). One document per `nodeId`. The server overwrites it with the latest snapshot, `agentVersion`, `lastSequence`, `lastReportedAt` (the batch's `observedAt`), `noiseScore`, `signalCount` (the sum of `count` over the batch's signals), and `activeSignalTypes` (the batch's distinct types). A batch with no signals also sets `lastCleanAt`.
 
 Consequences for agents and operators:
 
 - A node's score and active signal types always come from its latest accepted batch. A clean batch resets the node to a score of 0. Its earlier observations stay in the timeline until they expire.
-- Stale detection uses the agent's own clock (`observedAt`). An agent must report more often than `NETWORK_NOISE_STALE_AFTER_MS`, or the node shows as stale. A report whose `observedAt` is after server receipt, or whose signal's `firstSeenAt` or `lastSeenAt` is after receipt, or whose `firstSeenAt` is later than `lastSeenAt`, remains stale until a later valid batch replaces it. Older snapshots lack the report-time receipt check and remain stale until a new valid batch, even when they contain no signals. Clock skew can therefore temporarily make a reporting node stale.
+- Stale detection uses the agent's own clock (`observedAt`). An agent must report more often than `NETWORK_NOISE_STALE_AFTER_MS`, or the node shows as stale. A report whose `observedAt`, or one of whose signal `firstSeenAt` or `lastSeenAt` times, is later than the batch's first arrival plus `NETWORK_NOISE_CLOCK_SKEW_MS`, or whose `firstSeenAt` is later than `lastSeenAt`, remains stale until a later valid batch replaces it. Older snapshots lack the report-time receipt check and remain stale until a new valid batch, even when they contain no signals. An agent clock running ahead by more than the allowance makes every batch unverified, so the node stays stale until its clock is corrected.
 - An agent must persist its sequence across restarts. Reusing a sequence in the receipt-tracked range with different content returns a conflict; the legacy range remains conservatively rejected. Deleting only the node state does not reset the receipt history or its baseline.
 - Node state documents never expire. When you remove a node's token, it can no longer report, but it still appears in the summary as stale until you delete its state document.
 
@@ -416,11 +427,11 @@ Response shape (abridged):
 | `summary.activeSignals` | Sum of `signalCount` over reporting nodes |
 | `summary.chainAlerts` | Number of reporting nodes whose latest batch contained a chain-related type |
 | `nodes` | Every known node, sorted by `noiseScore` (highest first), then by `lastReportedAt` (newest first) |
-| `timeline` | Unexpired observations whose `lastSeenAt` falls in the window, whose `observedAt`, `firstSeenAt`, and `lastSeenAt` are not in the future, and whose first-seen time does not follow its last-seen time, grouped by UTC hour and `signalType`. `count` is the sum of occurrences and `nodes` lists the distinct node IDs |
-| `recentSignals` | Up to 80 unexpired observations in the window, excluding future times and inverted signal intervals, newest `lastSeenAt` first |
+| `timeline` | Unexpired observations whose `lastSeenAt` falls in the window, whose `observedAt`, `firstSeenAt`, and `lastSeenAt` are not in the future and passed the receipt check (older rows without a check result use only the time comparison), and whose first-seen time does not follow its last-seen time, grouped by UTC hour and `signalType`. `count` is the sum of occurrences and `nodes` lists the distinct node IDs |
+| `recentSignals` | Up to 80 unexpired observations in the window, excluding future or unverified times and inverted signal intervals, newest `lastSeenAt` first |
 
 The summary never includes the reported node IPs (`snapshot.ip`) or the signals' `peerIps`. The server stores them but does not publish them.
-Future-dated reports remain stored but are not counted as fresh even after the clock catches up. A later valid batch is needed to restore the node snapshot. A zero reporting-node count does not establish a quiet network; the legacy numeric summary fields remain zero for API compatibility.
+Future-dated reports and signals remain stored but are neither counted as fresh nor shown in `timeline` or `recentSignals`, even after the clock catches up. A later valid batch is needed to restore the node snapshot; it does not reveal earlier unverified signal rows. A zero reporting-node count does not establish a quiet network; the legacy numeric summary fields remain zero for API compatibility.
 
 ## Web Page
 
@@ -443,6 +454,7 @@ The server reads these variables once, at startup. Changing any of them requires
 | `NETWORK_NOISE_INGEST_TOKENS` | empty | Comma-separated `nodeId=token` entries, for example `fullnode-a=<token>,seed-a=<token>`. The first `=` splits each entry, and tokens cannot contain commas. The server silently ignores entries without `=` and tokens shorter than 32 characters |
 | `NETWORK_NOISE_OBSERVATION_TTL_DAYS` | `30` | Retention for stored observations, 1-365 days |
 | `NETWORK_NOISE_STALE_AFTER_MS` | `180000` | How long a node may go without reporting before it counts as stale, 60000-3600000 ms |
+| `NETWORK_NOISE_CLOCK_SKEW_MS` | `5000` | How far report, signal and PoSe event times may be ahead of the batch's first arrival and still be verified, 0-60000 ms. A later time is never verified, even after the clock passes it. A change applies to batches first received after the restart; a retry keeps its batch's stored limit |
 | `POSE_OBSERVATION_TTL_DAYS` | `365` | Structured v2 PoSe/DKG observation retention from server receipt, 1–1825 days; separate from the legacy observation TTL |
 
 The server refuses to start if a value is invalid or out of range, or if the monitor is enabled without at least one valid token entry.

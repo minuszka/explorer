@@ -52,7 +52,7 @@ export async function getBanAttribution(query: BanAttributionQuery): Promise<Ban
       observers = await PoseObservation.aggregate<{ _id: string; expiresAt: Date }>([
         { $match: { eventBlockHash: proof.blockHash, eventBlockHeight: proof.blockHeight,
           quorumType: proof.quorumType, quorumHash: proof.quorumHash, proTxHash: query.proTxHash,
-          expiresAt: { $gt: now }, eventAt: { $lte: now }, observedAt: { $lte: now },
+          expiresAt: { $gt: now }, eventAt: { $lte: now }, observedAt: { $lte: now }, timeVerified: { $ne: false },
           kind: { $in: ['penalty_change', 'ban', 'dkg_member'] } } },
         { $group: { _id: '$nodeId', expiresAt: { $max: '$expiresAt' } } },
       ]).option({ maxTimeMS: 10000 });
