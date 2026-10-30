@@ -26,6 +26,11 @@ const BUILD_DATE_FORMATTER = new Intl.DateTimeFormat('en-US', {
   timeZoneName: 'short',
 });
 
+function formatUtcDate(value: string): string | null {
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? BUILD_DATE_FORMATTER.format(new Date(parsed)) : null;
+}
+
 export default function Footer() {
   const [serverOffsetMs, setServerOffsetMs] = useState(0);
   const [tickMs, setTickMs] = useState(() => Date.now());
@@ -64,13 +69,10 @@ export default function Footer() {
     return `Server Time: ${SERVER_TIME_FORMATTER.format(serverNow)}`;
   }, [serverOffsetMs, tickMs]);
 
-  const buildDateLabel = useMemo(() => {
-    const parsed = Date.parse(buildMeta.date);
-    if (!Number.isFinite(parsed)) return 'unknown';
-    return BUILD_DATE_FORMATTER.format(new Date(parsed));
-  }, [buildMeta.date]);
+  const buildDateLabel = useMemo(() => formatUtcDate(buildMeta.date) ?? 'unknown', [buildMeta.date]);
+  const commitDateLabel = useMemo(() => formatUtcDate(buildMeta.commitDate), [buildMeta.commitDate]);
 
-  const buildTitle = `Build ID: ${buildMeta.id}\nBuild date: ${buildMeta.date}\nCommit: ${buildMeta.commitTitle}\nHash: ${buildMeta.shortHash}`;
+  const buildTitle = `Build ID: ${buildMeta.id}\nBuild date: ${buildMeta.date}\nCommit: ${buildMeta.commitTitle}\nHash: ${buildMeta.shortHash}\nCommit date: ${buildMeta.commitDate}`;
 
   return (
     <footer className="footer">
@@ -99,7 +101,10 @@ export default function Footer() {
           <div className="footer-build-info" title={buildTitle}>
             <p className="footer-build-id">Build {buildMeta.id}</p>
             <p className="footer-build-date">Built {buildDateLabel}</p>
-            <p className="footer-build-hash">Commit {buildMeta.commitTitle}</p>
+            <p className="footer-build-hash">Commit {buildMeta.shortHash} · {buildMeta.commitTitle}</p>
+            <p className="footer-build-commit-date">
+              Committed {commitDateLabel ? <time dateTime={buildMeta.commitDate}>{commitDateLabel}</time> : 'unknown'}
+            </p>
           </div>
         </div>
       </div>

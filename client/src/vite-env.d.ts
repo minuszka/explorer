@@ -11,4 +11,4 @@ interface ImportMeta {
 }
 
 declare const __BUILD_ID__: string;
-declare const __BUILD_META__: { id: string; shortHash: string; commitTitle: string; date: string };
+declare const __BUILD_META__: { id: string; shortHash: string; commitTitle: string; commitDate: string; date: string };

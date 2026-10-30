@@ -74,7 +74,8 @@
 
 .footer-build-id,
 .footer-build-date,
-.footer-build-hash {
+.footer-build-hash,
+.footer-build-commit-date {
   font-family: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, monospace;
 }
 

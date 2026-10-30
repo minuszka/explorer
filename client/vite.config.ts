@@ -1,40 +1,34 @@
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
 import path from 'path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 
-function resolveGitShortHash(): string {
+// The footer describes the commit this bundle was built from, i.e. what is running.
+function readGit(args: string[]): string {
   try {
-    const shortSha = execSync('git rev-parse --short HEAD', { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString()
-      .trim();
-    return shortSha || 'nogit';
+    return execFileSync('git', args, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim();
   } catch {
-    return 'nogit';
+    return '';
   }
 }
 
-function resolveGitCommitTitle(): string {
-  try {
-    const title = execSync('git log -1 --format=%s', { stdio: ['ignore', 'pipe', 'ignore'] })
-      .toString()
-      .trim();
-    return title || 'unknown commit';
-  } catch {
-    return 'unknown commit';
-  }
+function resolveGitCommitDate(): string {
+  const parsed = Date.parse(readGit(['log', '-1', '--format=%cI']));
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : 'unknown';
 }
 
 function resolveBuildMeta() {
   const date = new Date().toISOString();
   const stamp = date.replace(/[^0-9]/g, '').slice(0, 14);
-  const shortHash = resolveGitShortHash();
-  const commitTitle = resolveGitCommitTitle();
+  const shortHash = readGit(['rev-parse', '--short', 'HEAD']) || 'nogit';
+  const commitTitle = readGit(['log', '-1', '--format=%s']) || 'unknown commit';
+  const commitDate = resolveGitCommitDate();
 
   return {
     id: `${shortHash}-${stamp}`,
     shortHash,
     commitTitle,
+    commitDate,
     date,
   };
 }
