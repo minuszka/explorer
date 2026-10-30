@@ -286,7 +286,7 @@ For each accepted batch:
 Consequences for agents and operators:
 
 - A node's score and active signal types always come from its latest accepted batch. A clean batch resets the node to a score of 0. Its earlier observations stay in the timeline until they expire.
-- Stale detection uses the agent's own clock (`observedAt`). An agent must report more often than `NETWORK_NOISE_STALE_AFTER_MS`, or the node shows as stale. A snapshot with a signal's `firstSeenAt` or `lastSeenAt` after server receipt, or with `firstSeenAt` later than `lastSeenAt`, is also stale until a later valid batch replaces it. Older stored snapshots containing signals lack these timing checks and remain stale until a new valid batch; empty legacy snapshots do not require them.
+- Stale detection uses the agent's own clock (`observedAt`). An agent must report more often than `NETWORK_NOISE_STALE_AFTER_MS`, or the node shows as stale. A report whose `observedAt` is after server receipt, or whose signal's `firstSeenAt` or `lastSeenAt` is after receipt, or whose `firstSeenAt` is later than `lastSeenAt`, remains stale until a later valid batch replaces it. Older snapshots lack the report-time receipt check and remain stale until a new valid batch, even when they contain no signals. Clock skew can therefore temporarily make a reporting node stale.
 - An agent must persist its sequence across restarts. Reusing a sequence in the receipt-tracked range with different content returns a conflict; the legacy range remains conservatively rejected. Deleting only the node state does not reset the receipt history or its baseline.
 - Node state documents never expire. When you remove a node's token, it can no longer report, but it still appears in the summary as stale until you delete its state document.
 
@@ -411,7 +411,7 @@ Response shape (abridged):
 | --- | --- |
 | `staleAfterSeconds` | `NETWORK_NOISE_STALE_AFTER_MS` in seconds |
 | `summary.knownNodes` | All nodes that have a state document, stale ones included |
-| `summary.reportingNodes` | Nodes whose `lastReportedAt` falls inside the stale threshold and is not in the future, and whose signal times are verified, not future, and ordered |
+| `summary.reportingNodes` | Nodes whose `lastReportedAt` falls inside the stale threshold, was verified at receipt, and is not in the future, and whose signal times are verified, not future, and ordered |
 | `summary.staleNodes` | `knownNodes - reportingNodes` |
 | `summary.activeSignals` | Sum of `signalCount` over reporting nodes |
 | `summary.chainAlerts` | Number of reporting nodes whose latest batch contained a chain-related type |
@@ -420,7 +420,7 @@ Response shape (abridged):
 | `recentSignals` | Up to 80 unexpired observations in the window, excluding future times and inverted signal intervals, newest `lastSeenAt` first |
 
 The summary never includes the reported node IPs (`snapshot.ip`) or the signals' `peerIps`. The server stores them but does not publish them.
-Future-dated reports remain stored but are not counted as fresh. A zero reporting-node count does not establish a quiet network; the legacy numeric summary fields remain zero for API compatibility.
+Future-dated reports remain stored but are not counted as fresh even after the clock catches up. A later valid batch is needed to restore the node snapshot. A zero reporting-node count does not establish a quiet network; the legacy numeric summary fields remain zero for API compatibility.
 
 ## Web Page
 

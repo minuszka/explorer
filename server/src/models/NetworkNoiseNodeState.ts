@@ -14,6 +14,8 @@ const networkNoiseNodeStateSchema = new Schema(
     agentVersion: { type: String, default: null },
     lastSequence: { type: Number, required: true, default: 0 },
     lastReportedAt: { type: Date, required: true, index: true },
+    // A missing flag means the report time was not checked at receipt.
+    reportTimeVerified: { type: Boolean, default: false },
     blockHeight: { type: Number, default: null },
     bestBlockHash: { type: String, default: null },
     chainLockHeight: { type: Number, default: null },

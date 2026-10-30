@@ -74,6 +74,7 @@ class NetworkNoiseService {
     noiseScore: number;
     acceptedPoseObservations?: number;
   }> {
+    const receivedAt = new Date();
     if (await networkNoiseBatchService.claim(payload) === 'duplicate') {
       return {
         duplicate: true,
@@ -83,7 +84,6 @@ class NetworkNoiseService {
       };
     }
 
-    const receivedAt = new Date();
     const observedAt = new Date(payload.observedAt);
     const signalTimingInvalid = payload.signals.some((signal) =>
       new Date(signal.firstSeenAt) > receivedAt || new Date(signal.lastSeenAt) > receivedAt
@@ -150,6 +150,7 @@ class NetworkNoiseService {
       agentVersion: payload.agentVersion,
       lastSequence: payload.sequence,
       lastReportedAt: observedAt,
+      reportTimeVerified: observedAt <= receivedAt,
       blockHeight: payload.snapshot.blockHeight ?? null,
       bestBlockHash: payload.snapshot.bestBlockHash ?? null,
       chainLockHeight: payload.snapshot.chainLockHeight ?? null,
@@ -261,6 +262,7 @@ class NetworkNoiseService {
     ]);
 
     const isFresh = (state: typeof states[number]) => state.lastReportedAt >= staleCutoff && state.lastReportedAt <= now
+      && state.reportTimeVerified === true
       && (state.signalTimingInvalid === false || (state.signalTimingInvalid === undefined && state.signalCount === 0))
       && (state.signalIntervalVerified === true || (state.signalIntervalVerified === undefined && state.signalCount === 0));
     const reporting = states.filter(isFresh);

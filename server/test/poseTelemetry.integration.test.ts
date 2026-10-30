@@ -5,7 +5,7 @@ import { PoseObservation } from '../src/models/PoseObservation';
 import { NetworkNoiseNodeState } from '../src/models/NetworkNoiseNodeState';
 import { NetworkNoiseObservation } from '../src/models/NetworkNoiseObservation';
 import { NetworkNoiseBaseline, NetworkNoiseBatch } from '../src/models/NetworkNoiseBatch';
-import { NetworkNoiseSequenceConflict } from '../src/services/networkNoiseBatch.service';
+import { networkNoiseBatchService, NetworkNoiseSequenceConflict } from '../src/services/networkNoiseBatch.service';
 import { poseTelemetryService } from '../src/services/poseTelemetry.service';
 import { networkNoiseService } from '../src/services/networkNoise.service';
 import { poseEvent, posePayload } from './fixtures/poseTelemetry';
@@ -166,6 +166,56 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(result.nodes.find((entry) => entry.nodeId === 'fresh-node')?.isStale).toBe(false);
     expect(result.timeline).toEqual([]);
     expect(result.recentSignals).toEqual([]);
+  });
+
+  it.each([1, 2] as const)('keeps a future v%i report stale after the clock catches up until a valid batch', async (version) => {
+    const now = Date.now();
+    const recent = new Date(now - 1000).toISOString();
+    const source = payload({ observedAt: new Date(now + 60000).toISOString(), poseEvents: [], signals: [
+      { type: 'chainlock_conflict', fingerprint: 'future-report', count: 1, firstSeenAt: recent, lastSeenAt: recent },
+    ] });
+    const { poseEvents: _events, ...common } = source;
+    const report = version === 1 ? { ...common, schemaVersion: 1 as const } : source;
+    try {
+      await networkNoiseService.ingest(report);
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 0, chainAlerts: 0 });
+      vi.setSystemTime(now + 61000);
+      const caughtUp = await networkNoiseService.getSummary();
+      expect(caughtUp.summary).toMatchObject({ reportingNodes: 0, staleNodes: 1, activeSignals: 0, chainAlerts: 0 });
+      expect(caughtUp.nodes[0].isStale).toBe(true);
+      await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1,
+        observedAt: new Date(now + 60000).toISOString(), signals: [] });
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 1, staleNodes: 0 });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('treats legacy snapshots without verified report time as stale until a valid batch', async () => {
+    const report = payload({ observedAt: new Date().toISOString(), poseEvents: [], signals: [] });
+    await networkNoiseService.ingest(report);
+    await NetworkNoiseNodeState.collection.updateOne({ nodeId: report.nodeId }, { $unset: { reportTimeVerified: '' } });
+    expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 0, staleNodes: 1 });
+    await networkNoiseService.ingest({ ...report, sequence: report.sequence + 1 });
+    expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 1, staleNodes: 0 });
+  });
+
+  it('checks report time before a delayed batch claim', async () => {
+    const now = Date.now();
+    const report = payload({ observedAt: new Date(now + 60000).toISOString(), poseEvents: [], signals: [] });
+    const originalClaim = networkNoiseBatchService.claim;
+    const claim = vi.spyOn(networkNoiseBatchService, 'claim').mockImplementation(async (batch) => {
+      const result = await originalClaim(batch);
+      vi.setSystemTime(now + 61000);
+      return result;
+    });
+    try {
+      await networkNoiseService.ingest(report);
+      expect((await networkNoiseService.getSummary()).summary).toMatchObject({ reportingNodes: 0, staleNodes: 1 });
+    } finally {
+      claim.mockRestore();
+      vi.useRealTimers();
+    }
   });
 
   it.each([[1, 'firstSeenAt'], [1, 'lastSeenAt'], [2, 'firstSeenAt'], [2, 'lastSeenAt']] as const)(
