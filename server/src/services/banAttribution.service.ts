@@ -39,6 +39,7 @@ export async function getBanAttribution(query: BanAttributionQuery): Promise<Ban
   // One exact indexed canonical height; no polling, RPC, collection or database writes.
   const block = await PoseChainBlock.findOne({ canonical: true, height: query.banHeight }).lean().maxTimeMS(10000);
   let result: BanAttributionData;
+  let observers: { _id: string; expiresAt: Date }[] = [];
   if (!block) result = unknown('block_unavailable');
   else if (query.blockHash && block.hash !== query.blockHash) result = unknown('block_hash_mismatch');
   else if (!block.penaltyAttribution || block.penaltyAttribution.status === 'disabled') result = unknown('pending');
@@ -48,12 +49,13 @@ export async function getBanAttribution(query: BanAttributionQuery): Promise<Ban
     if (!resolution.proof) result = unknown(resolution.reason);
     else {
       const proof = resolution.proof;
-      const observers = await PoseObservation.distinct('nodeId', {
-        eventBlockHash: proof.blockHash, eventBlockHeight: proof.blockHeight,
-        quorumType: proof.quorumType, quorumHash: proof.quorumHash, proTxHash: query.proTxHash,
-        expiresAt: { $gt: now }, eventAt: { $lte: now }, observedAt: { $lte: now },
-        kind: { $in: ['penalty_change', 'ban', 'dkg_member'] },
-      }).maxTimeMS(10000);
+      observers = await PoseObservation.aggregate<{ _id: string; expiresAt: Date }>([
+        { $match: { eventBlockHash: proof.blockHash, eventBlockHeight: proof.blockHeight,
+          quorumType: proof.quorumType, quorumHash: proof.quorumHash, proTxHash: query.proTxHash,
+          expiresAt: { $gt: now }, eventAt: { $lte: now }, observedAt: { $lte: now },
+          kind: { $in: ['penalty_change', 'ban', 'dkg_member'] } } },
+        { $group: { _id: '$nodeId', expiresAt: { $max: '$expiresAt' } } },
+      ]).option({ maxTimeMS: 10000 });
       const name = proof.quorumType === 2 ? 'Q400_60' : proof.quorumType === 7 ? 'Q60/41' : `quorum type ${proof.quorumType}`;
       result = { ...common, status: 'verified', evidence: 'chain_verified_penalty', reason: null,
         proof: { ...proof, observerCount: observers.length },
@@ -69,6 +71,10 @@ export async function getBanAttribution(query: BanAttributionQuery): Promise<Ban
     || after.checkedAt?.getTime() !== state.checkedAt?.getTime()) {
     common.collectorStatus = 'collecting'; common.coverage.caughtUp = false;
     return unknown('read_invalidated');
+  }
+  if (result.status === 'verified') {
+    const finishedAt = new Date();
+    result.proof.observerCount = observers.filter((observer) => observer.expiresAt > finishedAt).length;
   }
   return result;
 }

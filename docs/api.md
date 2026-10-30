@@ -201,6 +201,9 @@ participants. Observer counts use exact block/height/type/base/member matches
 from unexpired penalty, ban or DKG observations whose event and report times are
 not in the future, and deduplicate node IDs. BANNED_BY uses the same time filter.
 Those observations retain their separate unverified evidence status.
+For BANNED_BY, reports that expire while the attribution is being read are
+excluded from the final observer count; a node still counts if another matching
+report from that node remains unexpired.
 
 With the separately enabled historical scoring stage, `penaltyCoverage` reports
 verified, pending, unavailable, unsupported and inconsistent commitment blocks

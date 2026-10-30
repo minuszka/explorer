@@ -6,7 +6,7 @@ import { chainHash } from './fixtures/poseChain';
 const mocks = vi.hoisted(() => ({ state: vi.fn(), block: vi.fn(), observers: vi.fn() }));
 vi.mock('../src/models/PoseChainState', () => ({ PoseChainState: { findOne: mocks.state } }));
 vi.mock('../src/models/PoseChainBlock', () => ({ PoseChainBlock: { findOne: mocks.block } }));
-vi.mock('../src/models/PoseObservation', () => ({ PoseObservation: { distinct: mocks.observers } }));
+vi.mock('../src/models/PoseObservation', () => ({ PoseObservation: { aggregate: mocks.observers } }));
 import { getBanAttribution } from '../src/services/banAttribution.service';
 
 describe('BANNED_BY read safety', () => {
@@ -19,7 +19,10 @@ describe('BANNED_BY read safety', () => {
     Object.assign(config.poseChain, { enabled: true, attributionEnabled: true });
     mocks.state.mockReturnValue(stateRead(async () => state));
     mocks.block.mockReturnValue({ lean: () => ({ maxTimeMS: async () => attributedBlock() }) });
-    mocks.observers.mockReturnValue({ maxTimeMS: async () => ['observer-a', 'observer-b'] });
+    mocks.observers.mockReturnValue({ option: async () => [
+      { _id: 'observer-a', expiresAt: new Date(attributionNow.getTime() + 86400000) },
+      { _id: 'observer-b', expiresAt: new Date(attributionNow.getTime() + 86400000) },
+    ] });
   });
   afterEach(() => { vi.useRealTimers(); vi.resetAllMocks(); Object.assign(config.poseChain, original); });
   it('queries only the exact canonical block and exact observer anchor', async () => {
@@ -27,11 +30,11 @@ describe('BANNED_BY read safety', () => {
     expect(data).toMatchObject({ status: 'verified', proof: { observerCount: 2, blockHeight: 100 } });
     expect(data.message).toContain('Q60/41');
     expect(mocks.block).toHaveBeenCalledWith({ canonical: true, height: 100 });
-    expect(mocks.observers.mock.calls[0]).toEqual(['nodeId', {
+    expect(mocks.observers.mock.calls[0]).toEqual([[{ $match: {
       eventBlockHash: chainHash(100), eventBlockHeight: 100, quorumType: 7, quorumHash: chainHash(900), proTxHash: chainHash(2),
       expiresAt: { $gt: attributionNow }, eventAt: { $lte: attributionNow }, observedAt: { $lte: attributionNow },
       kind: { $in: ['penalty_change', 'ban', 'dkg_member'] },
-    }]);
+    } }, { $group: { _id: '$nodeId', expiresAt: { $max: '$expiresAt' } } }]]);
   });
   it.each(['disabled', 'unavailable', 'collecting', 'stale', 'future', 'attribution_disabled', 'before', 'after'])(
     'does not read evidence with %s coverage', async (scenario) => {

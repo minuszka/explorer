@@ -576,6 +576,35 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
       status: 'unknown', reason: 'after_coverage', proof: null });
   });
 
+  it('excludes an observer that expires while the ban attribution is being read', async () => {
+    enablePenaltyEvidence(); config.poseChain.blocksPerRun = 1; await service.collectOnce();
+    const now = Date.now();
+    const event = poseEvent({ eventAt: new Date(now - 60000).toISOString(), kind: 'ban',
+      eventBlockHash: chainHash(100), eventBlockHeight: 100, quorumType: 7, quorumHash: chainHash(1000),
+      proTxHash: chainHash(2), poseBanHeight: 100 });
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'short-lived', poseEvents: [event] }));
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'still-valid', poseEvents: [event] }));
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'still-valid',
+      poseEvents: [{ ...event, kind: 'penalty_change', eventId: 'another-report' }] }));
+    await PoseObservation.updateOne({ nodeId: 'short-lived' }, { $set: { expiresAt: new Date(now + 1000) } });
+    await PoseObservation.updateOne({ nodeId: 'still-valid', kind: 'ban' }, { $set: { expiresAt: new Date(now + 1000) } });
+    const findOne = PoseChainState.findOne.bind(PoseChainState);
+    let calls = 0;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const spy = vi.spyOn(PoseChainState, 'findOne').mockImplementation(((...args: Parameters<typeof findOne>) => {
+      calls++;
+      if (calls === 2) vi.setSystemTime(now + 2000);
+      return findOne(...args);
+    }) as typeof PoseChainState.findOne);
+    try {
+      const data = await getBanAttribution({ proTxHash: chainHash(2), banHeight: 100 });
+      expect(data).toMatchObject({ status: 'verified', proof: { observerCount: 1 } });
+      expect(banAttributionDataSchema.safeParse(data).success).toBe(true);
+    } finally {
+      spy.mockRestore(); vi.useRealTimers();
+    }
+  });
+
   it('retracts a pinned orphan ban and suppresses altered stored state despite a verified label', async () => {
     const snapshots = enablePenaltyEvidence(); await service.collectOnce();
     const query = { proTxHash: chainHash(2), banHeight: 100, blockHash: chainHash(100) };
