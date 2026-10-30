@@ -27,7 +27,7 @@ export const networkNoiseBatchService = {
    * first arrival and time limit (epoch ms) for checking agent times.
    */
   async claim(payload: NetworkNoiseIngestPayload, receivedAt: Date): Promise<
-    { status: 'duplicate' } | { status: 'process'; firstReceivedAt: Date; timeLimit: number }
+    { status: 'duplicate' } | { status: 'process'; firstReceivedAt: Date; timeLimit: number; resend: boolean }
   > {
     await Promise.all([NetworkNoiseBaseline.init(), NetworkNoiseBatch.init()]);
     // Every writer establishes the immutable baseline before it can advance state.
@@ -47,27 +47,40 @@ export const networkNoiseBatchService = {
 
     const key = { nodeId: payload.nodeId, sequence: payload.sequence };
     const batchDigest = digest(payload);
+    const receipt = { digest: batchDigest, schemaVersion: payload.schemaVersion, complete: false,
+      firstReceivedAt: receivedAt, timeLimitAt: new Date(receivedAt.getTime() + config.networkNoise.clockSkewMs) };
     let batch;
     try {
-      batch = await NetworkNoiseBatch.findOneAndUpdate(key,
-        { $setOnInsert: { digest: batchDigest, complete: false, firstReceivedAt: receivedAt,
-          timeLimitAt: new Date(receivedAt.getTime() + config.networkNoise.clockSkewMs) } },
+      batch = await NetworkNoiseBatch.findOneAndUpdate(key, { $setOnInsert: receipt },
         { upsert: true, new: true }).lean();
     } catch (error) {
       if (!isDuplicateKeyOnly(error)) throw error;
       batch = await NetworkNoiseBatch.findOne(key).lean();
     }
     if (!batch) throw new Error('Network noise batch receipt unavailable');
-    if (batch.digest !== batchDigest) throw new NetworkNoiseSequenceConflict('Sequence already belongs to a different batch');
+    if (batch.digest !== batchDigest) {
+      // A schema 2 receipt holds its batch to identical content.
+      if (batch.schemaVersion !== 1) throw new NetworkNoiseSequenceConflict('Sequence already belongs to a different batch');
+      // A schema 1 agent advances its sequence only after a successful response
+      // and builds a new batch on every attempt. After a lost response or an
+      // interrupted write it resends this sequence with new content for as long
+      // as it is refused, so the newest content replaces the receipt instead.
+      batch = await NetworkNoiseBatch.findOneAndUpdate({ ...key, digest: batch.digest },
+        { $set: { ...receipt, replaced: true } }, { new: true }).lean();
+      // Another attempt replaced it first; the agent resends on its next cycle.
+      if (!batch) throw new NetworkNoiseSequenceConflict('Sequence already belongs to a different batch');
+    }
     if (batch.complete) return { status: 'duplicate' };
+    // Stored on the receipt, so an interrupted replacement still merges when retried.
+    const resend = batch.replaced === true;
     // The request that created the receipt fixed the batch's arrival and time
     // limit; retries and concurrent identical requests reuse both, so every
     // verdict for the batch agrees, even after a restart with another allowance.
     // A receipt from an earlier version has no limit: no time is verified.
     if (!batch.firstReceivedAt || !batch.timeLimitAt) {
-      return { status: 'process', firstReceivedAt: batch.createdAt, timeLimit: Number.NEGATIVE_INFINITY };
+      return { status: 'process', firstReceivedAt: batch.createdAt, timeLimit: Number.NEGATIVE_INFINITY, resend };
     }
-    return { status: 'process', firstReceivedAt: batch.firstReceivedAt, timeLimit: batch.timeLimitAt.getTime() };
+    return { status: 'process', firstReceivedAt: batch.firstReceivedAt, timeLimit: batch.timeLimitAt.getTime(), resend };
   },
 
   async complete(payload: NetworkNoiseIngestPayload): Promise<void> {

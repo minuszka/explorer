@@ -216,11 +216,11 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(anchors[0]).toBe(anchors[1]);
     expect(arrivals).toContain(anchors[0]);
     const timeLimit = anchors[0] + config.networkNoise.clockSkewMs;
-    expect(results).toEqual([{ status: 'process', firstReceivedAt: new Date(anchors[0]), timeLimit },
-      { status: 'process', firstReceivedAt: new Date(anchors[0]), timeLimit }]);
+    expect(results).toEqual([{ status: 'process', firstReceivedAt: new Date(anchors[0]), timeLimit, resend: false },
+      { status: 'process', firstReceivedAt: new Date(anchors[0]), timeLimit, resend: false }]);
     // Even an earlier arrival claimed later cannot move the anchor.
     expect(await networkNoiseBatchService.claim(report, new Date(now - 3000)))
-      .toEqual({ status: 'process', firstReceivedAt: new Date(anchors[0]), timeLimit });
+      .toEqual({ status: 'process', firstReceivedAt: new Date(anchors[0]), timeLimit, resend: false });
   });
 
   it('keeps the time limit stored with a batch when the clock-skew allowance changes before its retry', async () => {
@@ -413,6 +413,268 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(results.filter(result => result.status === 'rejected' && result.reason instanceof NetworkNoiseSequenceConflict)).toHaveLength(1);
     expect(await NetworkNoiseBatch.countDocuments()).toBe(1);
     expect(await PoseObservation.countDocuments()).toBe(1);
+  });
+
+  // The deployed schema 1 agent builds a new batch on every attempt and advances
+  // its sequence only after a successful response.
+  function agentBatch(sequence: number, at: number, blockHeight: number,
+    signals: ReturnType<typeof agentSignal>[] = []) {
+    const { poseEvents: _events, ...common } = payload({ sequence, observedAt: new Date(at).toISOString(),
+      snapshot: { ip: '198.51.100.40', blockHeight }, signals });
+    return { ...common, schemaVersion: 1 as const, agentVersion: '1.0.0' };
+  }
+  function agentSignal(fingerprint: string, at: number) {
+    const time = new Date(at).toISOString();
+    return { type: 'stale_peer', fingerprint, count: 1, firstSeenAt: time, lastSeenAt: time };
+  }
+
+  it('keeps a schema 1 agent reporting when it resends an interrupted sequence with new content', async () => {
+    const now = Date.now();
+    const first = agentBatch(20, now, 300, [agentSignal('seen-first', now - 1000)]);
+    const complete = vi.spyOn(networkNoiseBatchService, 'complete').mockRejectedValueOnce(new Error('connection lost'));
+    try {
+      await expect(networkNoiseService.ingest(first)).rejects.toThrow('connection lost');
+      complete.mockRestore();
+      // The next cycle is past the first attempt's time limit; its own arrival decides.
+      vi.setSystemTime(now + 60000);
+      const resend = agentBatch(20, now + 60000, 301,
+        [agentSignal('seen-first', now - 1000), agentSignal('seen-later', now + 59000)]);
+      expect(await networkNoiseService.ingest(resend)).toMatchObject({ duplicate: false, acceptedSignals: 2 });
+      expect(await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())
+        .toMatchObject({ lastSequence: 20, blockHeight: 301, reportTimeVerified: true, signalTimingInvalid: false });
+      expect(await NetworkNoiseObservation.countDocuments()).toBe(2);
+      expect(await NetworkNoiseObservation.countDocuments({ timeVerified: true })).toBe(2);
+      const receipt = await NetworkNoiseBatch.findOne({ nodeId: first.nodeId, sequence: 20 }).lean();
+      expect(receipt?.complete).toBe(true);
+      expect(receipt?.firstReceivedAt?.getTime()).toBeGreaterThanOrEqual(now + 60000);
+      expect(await networkNoiseService.ingest(agentBatch(21, now + 60000, 302))).toMatchObject({ duplicate: false });
+      expect((await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())?.lastSequence).toBe(21);
+    } finally {
+      complete.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a schema 1 agent reporting when the response to a completed batch was lost', async () => {
+    const now = Date.now();
+    const first = agentBatch(20, now, 300);
+    expect(await networkNoiseService.ingest(first)).toMatchObject({ duplicate: false });
+    try {
+      vi.setSystemTime(now + 60000);
+      const resend = agentBatch(20, now + 60000, 301, [agentSignal('seen-later', now + 59000)]);
+      expect(await networkNoiseService.ingest(resend)).toMatchObject({ duplicate: false, acceptedSignals: 1 });
+      expect(await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())
+        .toMatchObject({ lastSequence: 20, blockHeight: 301, reportTimeVerified: true });
+      expect(await networkNoiseService.ingest(resend)).toMatchObject({ duplicate: true });
+      expect(await networkNoiseService.ingest(agentBatch(21, now + 60000, 302))).toMatchObject({ duplicate: false });
+      expect((await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())?.lastSequence).toBe(21);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('lets a schema 1 agent continue after simultaneous resends of one sequence', async () => {
+    const now = Date.now();
+    await networkNoiseService.ingest(agentBatch(20, now, 300));
+    const results = await Promise.allSettled([
+      networkNoiseService.ingest(agentBatch(20, now, 301)),
+      networkNoiseService.ingest(agentBatch(20, now, 302)),
+    ]);
+    expect(results.some((result) => result.status === 'fulfilled')).toBe(true);
+    expect(await networkNoiseService.ingest(agentBatch(20, now, 303))).toMatchObject({ duplicate: false });
+    expect(await networkNoiseService.ingest(agentBatch(21, now, 304))).toMatchObject({ duplicate: false });
+    expect(await NetworkNoiseNodeState.findOne({ nodeId: 'node-a' }).lean())
+      .toMatchObject({ lastSequence: 21, blockHeight: 304 });
+  });
+
+  it('still refuses a schema 2 batch with different content while its receipt is incomplete', async () => {
+    const source = payload({ sequence: 30, poseEvents: [] });
+    const complete = vi.spyOn(networkNoiseBatchService, 'complete').mockRejectedValueOnce(new Error('connection lost'));
+    try {
+      await expect(networkNoiseService.ingest(source)).rejects.toThrow('connection lost');
+      await expect(networkNoiseService.ingest({ ...source, snapshot: { ...source.snapshot, blockHeight: 99 } }))
+        .rejects.toBeInstanceOf(NetworkNoiseSequenceConflict);
+      expect(await networkNoiseService.ingest(source)).toMatchObject({ duplicate: false });
+    } finally {
+      complete.mockRestore();
+    }
+  });
+
+  it.each([1, 2])('still merges when a replacing schema %i batch is interrupted and retried unchanged', async (version) => {
+    const now = Date.now();
+    await networkNoiseService.ingest(agentBatch(20, now, 300, [agentSignal('repeats', now - 2000)]));
+    const grown = agentBatch(20, now, 301, [{ ...agentSignal('repeats', now - 2000), count: 2,
+      lastSeenAt: new Date(now - 1000).toISOString() } as ReturnType<typeof agentSignal>]);
+    const replacing = version === 1 ? grown : { ...grown, schemaVersion: 2 as const, agentVersion: '2.0.0', poseEvents: [] };
+    const write = vi.spyOn(NetworkNoiseObservation, 'bulkWrite').mockRejectedValueOnce(new Error('interrupted'));
+    try {
+      await expect(networkNoiseService.ingest(replacing)).rejects.toThrow('interrupted');
+    } finally {
+      write.mockRestore();
+    }
+    expect((await NetworkNoiseObservation.findOne({ fingerprint: 'repeats' }).lean())?.count).toBe(1);
+    expect(await networkNoiseService.ingest(replacing)).toMatchObject({ duplicate: false });
+    expect(await NetworkNoiseObservation.findOne({ fingerprint: 'repeats' }).lean())
+      .toMatchObject({ count: 2, lastSeenAt: new Date(now - 1000) });
+    expect(await networkNoiseService.ingest(replacing)).toMatchObject({ duplicate: true });
+    expect(await NetworkNoiseObservation.countDocuments()).toBe(1);
+  });
+
+  it('does not merge a first delivery into a row of the same key', async () => {
+    const now = Date.now();
+    const batch = agentBatch(20, now, 300, [agentSignal('repeats', now - 2000)]);
+    const complete = vi.spyOn(networkNoiseBatchService, 'complete').mockRejectedValueOnce(new Error('connection lost'));
+    try {
+      await expect(networkNoiseService.ingest(batch)).rejects.toThrow('connection lost');
+    } finally {
+      complete.mockRestore();
+    }
+    // Marks the stored row: a merge would raise it to the batch's count of 1.
+    await NetworkNoiseObservation.collection.updateOne({ fingerprint: 'repeats' }, { $set: { count: 0 } });
+    expect(await networkNoiseService.ingest(batch)).toMatchObject({ duplicate: false });
+    expect((await NetworkNoiseObservation.findOne({ fingerprint: 'repeats' }).lean())?.count).toBe(0);
+  });
+
+  it.each([[-1000, true], [60000, false]])('gives a row without a time check the verdict of the resend merging into it (signal at %i ms)', async (offset, verdict) => {
+    const now = Date.now();
+    await networkNoiseService.ingest(agentBatch(20, now, 300, [agentSignal('repeats', now - 2000)]));
+    await NetworkNoiseObservation.collection.updateOne({ fingerprint: 'repeats' }, { $unset: { timeVerified: '' } });
+    await networkNoiseService.ingest(agentBatch(20, now, 301, [{ ...agentSignal('repeats', now - 2000), count: 2,
+      lastSeenAt: new Date(now + offset).toISOString() } as ReturnType<typeof agentSignal>]));
+    expect(await NetworkNoiseObservation.findOne({ fingerprint: 'repeats' }).lean())
+      .toMatchObject({ count: 2, timeVerified: verdict });
+  });
+
+  it('merges what a resend counted after a lost response into the stored signal', async () => {
+    const now = Date.now();
+    const time = (at: number) => new Date(at).toISOString();
+    const first = agentBatch(20, now, 300, [{ ...agentSignal('repeats', now - 2000),
+      peerIps: ['198.51.100.7'] } as ReturnType<typeof agentSignal>]);
+    const expected = { count: 2, firstSeenAt: new Date(now - 2000), lastSeenAt: new Date(now + 59000),
+      timeVerified: true, peerIps: ['198.51.100.7', '198.51.100.8'] };
+    await networkNoiseService.ingest(first);
+    try {
+      vi.setSystemTime(now + 60000);
+      await networkNoiseService.ingest(agentBatch(20, now + 60000, 301, [{ ...agentSignal('repeats', now - 2000),
+        count: 2, lastSeenAt: time(now + 59000), peerIps: ['198.51.100.7', '198.51.100.8'] } as ReturnType<typeof agentSignal>]));
+      expect(await NetworkNoiseObservation.findOne({ fingerprint: 'repeats' }).lean()).toMatchObject(expected);
+      // The older content arriving late cannot lower the row or rewind the snapshot.
+      await networkNoiseService.ingest(first);
+      expect(await NetworkNoiseObservation.findOne({ fingerprint: 'repeats' }).lean()).toMatchObject({ count: 2,
+        firstSeenAt: expected.firstSeenAt, lastSeenAt: expected.lastSeenAt, timeVerified: true });
+      expect(await NetworkNoiseObservation.countDocuments()).toBe(1);
+      expect((await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())?.blockHeight).toBe(301);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps a stored signal unverified when a later resend would pass the time check', async () => {
+    const now = Date.now();
+    const future = now + 60000;
+    await networkNoiseService.ingest(agentBatch(20, now, 300, [agentSignal('future', future)]));
+    expect((await NetworkNoiseObservation.findOne({ fingerprint: 'future' }).lean())?.timeVerified).toBe(false);
+    try {
+      vi.setSystemTime(now + 61000);
+      await networkNoiseService.ingest(agentBatch(20, now + 61000, 301, [agentSignal('future', future)]));
+      expect((await NetworkNoiseObservation.findOne({ fingerprint: 'future' }).lean())?.timeVerified).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('does not let a stalled attempt overwrite the resend that replaced it', async () => {
+    const now = Date.now();
+    let release!: () => void;
+    let waiting!: () => void;
+    const stalled = new Promise<void>((resolve) => { waiting = resolve; });
+    const proceed = new Promise<void>((resolve) => { release = resolve; });
+    const update = NetworkNoiseNodeState.updateOne.bind(NetworkNoiseNodeState);
+    const spy = vi.spyOn(NetworkNoiseNodeState, 'updateOne').mockImplementation(async (...args: Parameters<typeof update>) => {
+      const change = args[1] as { $set?: { blockHeight?: number } };
+      if (change.$set?.blockHeight === 300) { waiting(); await proceed; }
+      return update(...args);
+    });
+    const first = networkNoiseService.ingest(agentBatch(20, now, 300));
+    try {
+      await stalled;
+      vi.setSystemTime(now + 60000);
+      expect(await networkNoiseService.ingest(agentBatch(20, now + 60000, 301))).toMatchObject({ duplicate: false });
+    } finally {
+      release();
+      await expect(first).rejects.toThrow('receipt missing');
+      spy.mockRestore();
+    }
+    try {
+      const state = { lastSequence: 20, blockHeight: 301, lastCleanAt: new Date(now + 60000) };
+      expect(await NetworkNoiseNodeState.findOne({ nodeId: 'node-a' }).lean()).toMatchObject(state);
+      // A later batch that is not clean must not leave an older clean time behind.
+      await networkNoiseService.ingest(agentBatch(21, now + 60000, 302, [agentSignal('later', now + 59000)]));
+      expect(await NetworkNoiseNodeState.findOne({ nodeId: 'node-a' }).lean())
+        .toMatchObject({ lastSequence: 21, blockHeight: 302, lastCleanAt: state.lastCleanAt });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('never lets a schema 1 batch replace a schema 2 receipt', async () => {
+    const strict = payload({ sequence: 40, poseEvents: [] });
+    const complete = vi.spyOn(networkNoiseBatchService, 'complete').mockRejectedValueOnce(new Error('connection lost'));
+    try {
+      await expect(networkNoiseService.ingest(strict)).rejects.toThrow('connection lost');
+    } finally {
+      complete.mockRestore();
+    }
+    await expect(networkNoiseService.ingest(agentBatch(40, Date.now(), 300))).rejects.toBeInstanceOf(NetworkNoiseSequenceConflict);
+    expect(await networkNoiseService.ingest(strict)).toMatchObject({ duplicate: false });
+    expect(await networkNoiseService.ingest(strict)).toMatchObject({ duplicate: true });
+    await expect(networkNoiseService.ingest(agentBatch(40, Date.now(), 301))).rejects.toBeInstanceOf(NetworkNoiseSequenceConflict);
+  });
+
+  it('lets a schema 2 batch replace a schema 1 receipt and then holds it to its content', async () => {
+    const now = Date.now();
+    await networkNoiseService.ingest(agentBatch(40, now, 300));
+    const strict = payload({ sequence: 40, poseEvents: [] });
+    expect(await networkNoiseService.ingest(strict)).toMatchObject({ duplicate: false });
+    expect(await networkNoiseService.ingest(strict)).toMatchObject({ duplicate: true });
+    await expect(networkNoiseService.ingest({ ...strict, snapshot: { ...strict.snapshot, blockHeight: 99 } }))
+      .rejects.toBeInstanceOf(NetworkNoiseSequenceConflict);
+    await expect(networkNoiseService.ingest(agentBatch(40, now, 301))).rejects.toBeInstanceOf(NetworkNoiseSequenceConflict);
+  });
+
+  it('judges new content with an old future time at its own arrival, as it does a higher sequence', async () => {
+    const now = Date.now();
+    const future = now + 60000;
+    await networkNoiseService.ingest(agentBatch(20, future, 300));
+    expect((await NetworkNoiseNodeState.findOne({ nodeId: 'node-a' }).lean())?.reportTimeVerified).toBe(false);
+    try {
+      vi.setSystemTime(now + 61000);
+      await networkNoiseService.ingest(agentBatch(20, future, 301));
+      expect((await NetworkNoiseNodeState.findOne({ nodeId: 'node-a' }).lean())?.reportTimeVerified).toBe(true);
+      await networkNoiseService.ingest(agentBatch(21, future, 302));
+      expect((await NetworkNoiseNodeState.findOne({ nodeId: 'node-a' }).lean())?.reportTimeVerified).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('judges a node anew after an older server accepted batches during a rollback', async () => {
+    const now = Date.now();
+    await networkNoiseService.ingest(agentBatch(20, now, 300));
+    const nodeId = 'node-a';
+    expect((await NetworkNoiseNodeState.findOne({ nodeId }).lean())?.reportTimeVerified).toBe(true);
+    // An older server advances the state without a receipt and leaves the newer flags alone.
+    await NetworkNoiseNodeState.updateOne({ nodeId }, { $set: { lastSequence: 21, blockHeight: 301,
+      lastReportedAt: new Date(now + 1000) } });
+    // After the redeploy the response it never gave is resent with new content.
+    expect(await networkNoiseService.ingest(agentBatch(21, now + 2000, 302))).toMatchObject({ duplicate: false });
+    expect(await NetworkNoiseNodeState.findOne({ nodeId }).lean())
+      .toMatchObject({ lastSequence: 21, blockHeight: 302, reportTimeVerified: true });
+    // The flags come from this server's own check, not from the earlier write.
+    await networkNoiseService.ingest(agentBatch(22, now + 120000, 303));
+    expect(await NetworkNoiseNodeState.findOne({ nodeId }).lean())
+      .toMatchObject({ lastSequence: 22, blockHeight: 303, reportTimeVerified: false });
+    expect((await NetworkNoiseBaseline.findOne({ nodeId }).lean())?.legacySequence).toBe(-1);
   });
 
   it('recovers a delayed v1 signal without replacing the newer state', async () => {
@@ -716,7 +978,10 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(state).toMatchObject({ lastSequence: 13, ip: '198.51.100.41', blockHeight: 200 });
     expect(state?.lastCleanAt).toEqual(delayedSequence === 12 ? null : new Date(older.observedAt));
     expect(await PoseObservation.countDocuments()).toBe(1);
-    await expect(networkNoiseService.ingest(first)).rejects.toBeInstanceOf(NetworkNoiseSequenceConflict);
+    // A schema 2 batch may replace the schema 1 receipt of its sequence; the newer snapshot stays.
+    expect(await networkNoiseService.ingest(first)).toMatchObject({ duplicate: false });
+    expect(await NetworkNoiseNodeState.findOne({ nodeId: first.nodeId }).lean())
+      .toMatchObject({ lastSequence: 13, ip: '198.51.100.41', blockHeight: 200 });
   });
 
   it('accepts sequence zero for a new node and rejects its retry', async () => {

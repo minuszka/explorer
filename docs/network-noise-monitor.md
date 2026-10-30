@@ -45,23 +45,34 @@ The server handles a request in this order:
 2. It validates the body against the schema below. On failure it returns `400` with code `BAD_REQUEST` and the first validation message.
 3. It looks up the token configured for the payload's `nodeId` and compares it with the bearer token in constant time. A missing, unknown, or wrong token returns `401` with code `UNAUTHORIZED`.
 4. On the first request for a node after this update, the existing last sequence is fixed as a legacy baseline. Sequences at or below that baseline return `200` with `duplicate: true`; their original contents are not available for comparison.
-5. Above the baseline, the server stores a permanent receipt keyed by node and sequence with a digest of the normalized batch, the arrival of the request that created it (`firstReceivedAt`), and the batch's time limit (`timeLimitAt`: that arrival plus the `NETWORK_NOISE_CLOCK_SKEW_MS` then in force). Neither changes afterwards: retries and concurrent identical requests, including one that arrived earlier but reached the receipt later, use the same values. An already completed identical batch returns `200` with `duplicate: true`. A different payload with the same node and sequence returns `409` with code `SEQUENCE_CONFLICT`.
+5. Above the baseline, the server stores a permanent receipt keyed by node and sequence with a digest of the normalized batch, the arrival of the request that created it (`firstReceivedAt`), and the batch's time limit (`timeLimitAt`: that arrival plus the `NETWORK_NOISE_CLOCK_SKEW_MS` then in force). Retries and concurrent identical requests, including one that arrived earlier but reached the receipt later, use the same values. An already completed identical batch returns `200` with `duplicate: true`. A different payload with the same node and sequence depends on the schema of the stored receipt:
+   - Schema 1 receipt: the agent advances its sequence only after a successful response and builds a new batch on every attempt, so after a lost response or an interrupted write it keeps resending the sequence with new content. The newest content replaces the receipt, with its own arrival and time limit, and is processed as a new batch, judged exactly as it would be under a higher sequence. Because the agent re-reads its log from the same position, a resent signal merges with the row stored under the same key: the highest count, the earliest first and latest last time, and the peer list of the attempt written last. A row that failed its time check stays unverified. Within one sequence the node snapshot is written only if its report time is not older than the stored one. Only a simultaneous attempt that loses the replacement returns `409` with code `SEQUENCE_CONFLICT`, and the agent resends on its next cycle.
+   - Schema 2 receipt: returns `409` with code `SEQUENCE_CONFLICT`, whichever schema the new payload uses. An agent on this schema must resend the identical batch. A schema 2 batch may replace a schema 1 receipt, for example after an agent upgrade, and is held to its own content from then on.
 6. A previously unseen or incomplete batch above the baseline is processed and returns `202`. Observations use their existing idempotent keys, and the node snapshot is written only for the same or a higher sequence. This permits recovery of a delayed batch without rewinding the snapshot.
 
 Concurrent identical batches can both process; their observation keys remain
 idempotent. A failed or interrupted batch can be retried after a newer batch.
 Agent times are checked against the batch's stored time limit, so every write
 for a batch reaches the same verdict, even if the allowance changes before a
-retry. A time after that limit is never verified, even after the clock passes
-it. An incomplete receipt created before the limit was recorded cannot show when
+retry. A time after that limit is never verified for that batch, even after the
+clock passes it. An incomplete receipt created before the limit was recorded cannot show when
 its batch arrived: a retry stores that batch's snapshot and any new rows as
 unverified, and a later valid batch restores the node snapshot. Rows an earlier
 version already wrote without a check are not re-judged; like all such rows,
-they keep the previous time rule until they expire.
+they keep the previous time rule until they expire. The one exception is a resend
+with new content that merges into such a row, which then takes that resend's verdict.
 Receipts have no TTL: deleting them would allow an old batch to be accepted again,
 so operators must account for storage growth. The legacy baseline and receipts
 must be preserved together with node state. Run one compatible server version
 for ingest during the transition; older writers do not create receipts.
+
+After a rollback to a version without receipts and a later redeploy, a sequence the
+older version accepted has no receipt. If it is resent it is processed as a new
+batch; observation keys stay idempotent, so nothing is stored twice. A snapshot the
+older version wrote keeps the time-check flags of the last receipt-aware write until
+that node's next accepted batch, about a minute with a working standard agent. A node
+that stops reporting keeps them, so a future-dated snapshot the older version accepted
+can count as current once the clock passes it.
 
 Error bodies have the form `{"success": false, "error": {"code": "...", "message": "..."}}`. A storage failure returns `500` with code `INTERNAL` and an `errorId`. Responses produced before the route handler runs do not use this shape: a body that is not valid JSON (`400`) or is larger than 100 KB (`413`) is answered by Express's default error handler, and `429` responses carry the rate limiter's plain-text message.
 
@@ -82,7 +93,7 @@ Length limits apply after leading and trailing whitespace is trimmed. Unknown fi
 | `nodeId` | string | 1-64 characters from `A-Z a-z 0-9 . _ -`. It must have a token in `NETWORK_NOISE_INGEST_TOKENS` |
 | `nodeRole` | string | `seed`, `fullnode`, `test_mn`, `masternode`, or `unknown` |
 | `observedAt` | string | ISO 8601 date-time with `Z` or a UTC offset |
-| `sequence` | integer | 0 or greater. It must increase with every batch the node sends |
+| `sequence` | integer | 0 or greater. It must increase after every batch the server accepts. A schema 1 agent may resend a refused or unanswered sequence with new content |
 | `snapshot` | object | Node state when the batch was built (see below) |
 | `signals` | array | 0-100 signal objects (see below). An empty array means a clean cycle |
 
@@ -175,8 +186,9 @@ If the same batch is sent again, the response is `200` with `{ "duplicate": true
 
 ### Structured PoSe/DKG payload (`schemaVersion` 2)
 
-Version 1 payloads remain supported. Agents must retain the exact batch for retries;
-their handling of a sequence conflict must be verified separately. Version 2 carries the same batch,
+Version 1 payloads remain supported, including resends with new content. A version 2
+agent must retain the exact batch for retries, because a receipt on this schema refuses
+different content. Version 2 carries the same batch,
 snapshot and legacy `signals` fields, plus a required `poseEvents` array (0–100
 entries). Each entry describes one source event, with no occurrence multiplier.
 The legacy score, `activeSignals` and timeline continue to use `signals` only;
@@ -296,9 +308,9 @@ For each accepted batch:
 
 Consequences for agents and operators:
 
-- A node's score and active signal types always come from its latest accepted batch. A clean batch resets the node to a score of 0. Its earlier observations stay in the timeline until they expire.
+- A node's score and active signal types come from its latest accepted batch; within one sequence, from the batch with the latest report time. A clean batch resets the node to a score of 0. Its earlier observations stay in the timeline until they expire.
 - Stale detection uses the agent's own clock (`observedAt`). An agent must report more often than `NETWORK_NOISE_STALE_AFTER_MS`, or the node shows as stale. A report whose `observedAt`, or one of whose signal `firstSeenAt` or `lastSeenAt` times, is later than the batch's first arrival plus `NETWORK_NOISE_CLOCK_SKEW_MS`, or whose `firstSeenAt` is later than `lastSeenAt`, remains stale until a later valid batch replaces it. Older snapshots lack the report-time receipt check and remain stale until a new valid batch, even when they contain no signals. An agent clock running ahead by more than the allowance makes every batch unverified, so the node stays stale until its clock is corrected.
-- An agent must persist its sequence across restarts. Reusing a sequence in the receipt-tracked range with different content returns a conflict; the legacy range remains conservatively rejected. Deleting only the node state does not reset the receipt history or its baseline.
+- An agent must persist its sequence across restarts. Reusing a sequence in the receipt-tracked range with different content replaces a schema 1 receipt (a simultaneous attempt that loses the replacement gets a conflict and resends) and returns a conflict on a schema 2 receipt; the legacy range remains conservatively rejected. Deleting only the node state does not reset the receipt history or its baseline.
 - Node state documents never expire. When you remove a node's token, it can no longer report, but it still appears in the summary as stale until you delete its state document.
 
 ## Signal Types and Scoring
@@ -465,7 +477,7 @@ Give each node its own random token, for example one made with `openssl rand -he
 
 - **The summary is public.** The summary endpoint and the page require no login. For every known node they show the `nodeId`, role, wallet and agent versions, chain tip, ChainLock, and connection counts. For recent signals they also show fingerprints and log samples. Reported node IPs and peer IPs are stored in MongoDB but left out of the summary. Register only nodes whose log content you are willing to publish, and choose node IDs that do not reveal internal host names.
 - **The agent must redact.** The server stores samples exactly as it receives them. It rejects samples longer than 300 characters but removes nothing from them. Before sending, the agent must strip credentials, keys, file paths, and any address or identifier that should not be published.
-- **Authentication uses static tokens.** Each token is a shared secret for one node. Requests are not signed. The legacy high-water mark and tracked batch receipts prevent reprocessing known sequences, but an unseen sequence above the baseline can be accepted out of order. To rotate a token, update `NETWORK_NOISE_INGEST_TOKENS` and restart the server.
+- **Authentication uses static tokens.** Each token is a shared secret for one node. Requests are not signed. The legacy high-water mark prevents reprocessing sequences at or below the baseline, and tracked batch receipts prevent reprocessing identical batches. A schema 1 receipt can still be replaced by different content under its sequence, and an unseen sequence above the baseline can be accepted out of order. To rotate a token, update `NETWORK_NOISE_INGEST_TOKENS` and restart the server.
 
 ## Limitations
 

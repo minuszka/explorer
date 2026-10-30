@@ -105,37 +105,39 @@ class NetworkNoiseService {
     const activeSignalTypes = Array.from(new Set(payload.signals.map((signal) => signal.type))).sort();
 
     if (payload.signals.length > 0) {
-      const operations = payload.signals.map((signal) => ({
-        updateOne: {
-          filter: { dedupeKey: makeDedupeKey(payload, signal) },
-          update: {
-            $setOnInsert: {
-              dedupeKey: makeDedupeKey(payload, signal),
-              nodeId: payload.nodeId,
-              nodeRole: payload.nodeRole,
-              ip: payload.snapshot.ip,
-              walletVersion: payload.snapshot.walletVersion ?? null,
-              sequence: payload.sequence,
-              observedAt,
-              receivedAt: batch.firstReceivedAt,
-              timeVerified: reportTimeVerified && timeVerified(signal.firstSeenAt) && timeVerified(signal.lastSeenAt),
-              signalType: signal.type,
-              fingerprint: signal.fingerprint,
-              count: signal.count,
-              firstSeenAt: new Date(signal.firstSeenAt),
-              lastSeenAt: new Date(signal.lastSeenAt),
-              peerIps: Array.from(new Set(signal.peerIps ?? [])).slice(0, 20),
-              sample: signal.sample?.slice(0, 300) ?? null,
-              blockHeight: payload.snapshot.blockHeight ?? null,
-              bestBlockHash: payload.snapshot.bestBlockHash ?? null,
-              chainLockHeight: payload.snapshot.chainLockHeight ?? null,
-              chainLockHash: payload.snapshot.chainLockHash ?? null,
-              expiresAt,
-            },
-          },
-          upsert: true,
-        },
-      }));
+      const operations = payload.signals.map((signal) => {
+        const dedupeKey = makeDedupeKey(payload, signal);
+        const verified = reportTimeVerified && timeVerified(signal.firstSeenAt) && timeVerified(signal.lastSeenAt);
+        const firstSeenAt = new Date(signal.firstSeenAt);
+        const lastSeenAt = new Date(signal.lastSeenAt);
+        const peerIps = Array.from(new Set(signal.peerIps ?? [])).slice(0, 20);
+        const fixed = {
+          dedupeKey,
+          nodeId: payload.nodeId,
+          nodeRole: payload.nodeRole,
+          ip: payload.snapshot.ip,
+          walletVersion: payload.snapshot.walletVersion ?? null,
+          sequence: payload.sequence,
+          observedAt,
+          receivedAt: batch.firstReceivedAt,
+          signalType: signal.type,
+          fingerprint: signal.fingerprint,
+          sample: signal.sample?.slice(0, 300) ?? null,
+          blockHeight: payload.snapshot.blockHeight ?? null,
+          bestBlockHash: payload.snapshot.bestBlockHash ?? null,
+          chainLockHeight: payload.snapshot.chainLockHeight ?? null,
+          chainLockHash: payload.snapshot.chainLockHash ?? null,
+          expiresAt,
+        };
+        // A resend re-reads the log from the same position, so it covers what an
+        // earlier attempt stored under this key. Merging keeps what that attempt
+        // counted, and a row that failed its time check stays unverified.
+        const update = batch.resend
+          ? { $setOnInsert: fixed, $set: { peerIps }, $max: { count: signal.count, lastSeenAt },
+            $min: { firstSeenAt, timeVerified: verified } }
+          : { $setOnInsert: { ...fixed, timeVerified: verified, count: signal.count, firstSeenAt, lastSeenAt, peerIps } };
+        return { updateOne: { filter: { dedupeKey }, update, upsert: true } };
+      });
 
       try {
         await NetworkNoiseObservation.bulkWrite(operations, { ordered: false });
@@ -181,9 +183,14 @@ class NetworkNoiseService {
     // Ensure the unique node key exists before relying on the upsert race guard.
     // A retry rewrites the snapshot of its own sequence with the same verdict (or
     // an unverified one for an earlier version's receipt); a newer one is kept.
-    // Rows an earlier version wrote without a check are not re-judged.
+    // Rows an earlier version wrote without a check are not re-judged. Within one
+    // sequence an older report time loses, so a stalled attempt cannot overwrite
+    // the resend that replaced it.
     await NetworkNoiseNodeState.init();
-    const stateFilter = { nodeId: payload.nodeId, lastSequence: { $lte: payload.sequence } };
+    const stateFilter = { nodeId: payload.nodeId, $or: [
+      { lastSequence: { $lt: payload.sequence } },
+      { lastSequence: payload.sequence, lastReportedAt: { $lte: observedAt } },
+    ] };
     try {
       await NetworkNoiseNodeState.updateOne(stateFilter, {
         $set: stateUpdate,
