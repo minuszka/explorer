@@ -262,6 +262,35 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
     expect(recovered.commitments[0].members[1].observerCount).toBe(13);
   });
 
+  it('excludes observers that expire while reading commitment and member counts', async () => {
+    await service.collectOnce();
+    const now = Date.now();
+    const event = poseEvent({ eventAt: new Date(now - 60000).toISOString(), eventBlockHash: chainHash(102),
+      eventBlockHeight: 102, quorumType: 7, quorumHash: chainHash(1002), proTxHash: chainHash(2) });
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'short-lived', poseEvents: [event] }));
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'still-valid', poseEvents: [event] }));
+    await poseTelemetryService.ingest(posePayload({ nodeId: 'still-valid',
+      poseEvents: [{ ...event, eventId: 'other-score', penalty: 99 }] }));
+    await PoseObservation.updateMany({ nodeId: 'short-lived' }, { $set: { expiresAt: new Date(now + 1000) } });
+    await PoseObservation.updateOne({ nodeId: 'still-valid', penalty: 145 }, { $set: { expiresAt: new Date(now + 1000) } });
+    const findOne = PoseChainState.findOne.bind(PoseChainState);
+    let calls = 0;
+    vi.useFakeTimers({ toFake: ['Date'] });
+    const spy = vi.spyOn(PoseChainState, 'findOne').mockImplementation(((...args: Parameters<typeof findOne>) => {
+      calls++;
+      if (calls === 2) vi.setSystemTime(now + 2000);
+      return findOne(...args);
+    }) as typeof PoseChainState.findOne);
+    try {
+      const data = await getPoseChainData(query({ limit: 1, proTxHash: chainHash(2), quorumType: 7 }));
+      expect(data).toMatchObject({ status: 'ready', total: 3, commitments: [{ observerCount: 1 }] });
+      expect(data.commitments[0].members[1].observerCount).toBe(1);
+      expect(poseChainDataSchema.safeParse(data).success).toBe(true);
+    } finally {
+      spy.mockRestore(); vi.useRealTimers();
+    }
+  });
+
   it('does not serve attribution when disabled, stale, collecting or errored', async () => {
     expect(await getPoseChainData(query())).toMatchObject({ status: 'unavailable', total: 0 });
     await service.collectOnce();

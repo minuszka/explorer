@@ -110,13 +110,13 @@ export async function getPoseChainData(query: PoseChainQuery): Promise<PoseChain
   }));
   // Group in MongoDB rather than loading every retransmission/score variant.
   const observations = anchors.length ? await PoseObservation.aggregate<{
-    _id: { blockHash: string; height: number; quorumType: number; quorumHash: string; proTxHash: string };
-    nodeIds: string[];
+    _id: { blockHash: string; height: number; quorumType: number; quorumHash: string; proTxHash: string; nodeId: string };
+    expiresAt: Date;
   }>([
     { $match: { $or: anchors, expiresAt: { $gt: now }, eventAt: { $lte: now }, observedAt: { $lte: now },
       kind: { $in: ['penalty_change', 'ban', 'dkg_member'] } } },
     { $group: { _id: { blockHash: '$eventBlockHash', height: '$eventBlockHeight', quorumType: '$quorumType',
-      quorumHash: '$quorumHash', proTxHash: '$proTxHash' }, nodeIds: { $addToSet: '$nodeId' } } },
+      quorumHash: '$quorumHash', proTxHash: '$proTxHash', nodeId: '$nodeId' }, expiresAt: { $max: '$expiresAt' } } },
   ]).option({ maxTimeMS: 10000 }) : [];
   data.total = result?.totals[0]?.total ?? 0;
   data.quorumSummary = result?.summary ?? [];
@@ -125,16 +125,13 @@ export async function getPoseChainData(query: PoseChainQuery): Promise<PoseChain
     const attribution = config.poseChain.attributionEnabled ? row.penaltyAttribution : null;
     const penaltyStatus: PoseChainData['commitments'][number]['penaltyAttributionStatus'] = !config.poseChain.attributionEnabled
       ? 'disabled' : !attribution || attribution.status === 'disabled' ? 'pending' : attribution.status;
-    const related = observations.filter((observation) => observation._id.blockHash === row.hash
-      && observation._id.height === row.height && observation._id.quorumType === c.quorumType
-      && observation._id.quorumHash === c.quorumHash);
     return {
       blockHeight: row.height, blockHash: row.hash, blockTime: row.time.toISOString(), txid: c.txid,
       quorumType: c.quorumType, quorumHash: c.quorumHash, version: c.version, membershipStatus: c.status,
       quorumIndex: c.quorumIndex, memberSlots: c.memberSlots, invalidSlots: c.invalidSlots,
       evidence: c.status === 'verified' ? 'chain_verified_membership' : 'unknown',
       participantCount: c.members.length, invalidMemberCount: c.members.filter((member) => !member.valid).length,
-      observerCount: new Set(related.flatMap((observation) => observation.nodeIds)).size,
+      observerCount: 0,
       penaltyAttributionStatus: penaltyStatus,
       penaltyAttributionReason: penaltyStatus === 'disabled' ? 'disabled' : penaltyStatus === 'pending' ? null : attribution?.reason ?? null,
       penaltyRule: attribution?.status === 'verified' ? attribution.rule : null,
@@ -146,8 +143,7 @@ export async function getPoseChainData(query: PoseChainQuery): Promise<PoseChain
           appliedDelta: application.appliedDelta, maxPenalty: application.maxPenalty, previousBanHeight: application.previousBanHeight,
           banHeight: application.banHeight, causedBan: application.causedBan } : null;
         return { ...member,
-          observerCount: new Set(related.filter((observation) => observation._id.proTxHash === member.proTxHash)
-            .flatMap((observation) => observation.nodeIds)).size,
+          observerCount: 0,
           penaltyEvidence: (application ? 'chain_verified_penalty' : member.valid || penaltyStatus === 'verified'
             ? 'not_applicable' : 'unknown') as PoseChainData['commitments'][number]['members'][number]['penaltyEvidence'],
           penaltyReason: (application ? null : member.valid ? 'valid_member' : penaltyStatus === 'verified'
@@ -168,6 +164,19 @@ export async function getPoseChainData(query: PoseChainQuery): Promise<PoseChain
       total: 0, quorumSummary: [], commitments: [], penaltyCoverage: { ...data.penaltyCoverage,
         commitmentBlocks: 0, verifiedBlocks: 0, pendingBlocks: 0, unavailableBlocks: 0, unsupportedBlocks: 0,
         inconsistentBlocks: 0, notApplicableBlocks: 0 } };
+  }
+  // A report may have expired during either the MongoDB queries or the final
+  // chain-state read. Recount unique nodes using their last matching expiry.
+  const finishedAt = new Date();
+  for (const commitment of data.commitments) {
+    const related = observations.filter((observation) => observation._id.blockHash === commitment.blockHash
+      && observation._id.height === commitment.blockHeight && observation._id.quorumType === commitment.quorumType
+      && observation._id.quorumHash === commitment.quorumHash && observation.expiresAt > finishedAt);
+    commitment.observerCount = new Set(related.map((observation) => observation._id.nodeId)).size;
+    for (const member of commitment.members) {
+      member.observerCount = new Set(related.filter((observation) => observation._id.proTxHash === member.proTxHash)
+        .map((observation) => observation._id.nodeId)).size;
+    }
   }
   return data;
 }

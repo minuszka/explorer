@@ -204,6 +204,8 @@ Those observations retain their separate unverified evidence status.
 For BANNED_BY, reports that expire while the attribution is being read are
 excluded from the final observer count; a node still counts if another matching
 report from that node remains unexpired.
+The pose-chain commitment and member observer counts apply the same expiry
+recheck after the collector-state validation.
 
 With the separately enabled historical scoring stage, `penaltyCoverage` reports
 verified, pending, unavailable, unsupported and inconsistent commitment blocks
