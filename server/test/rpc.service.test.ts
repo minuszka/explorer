@@ -53,6 +53,15 @@ describe('rpc service', () => {
     );
   });
 
+  it('serves a cached parameterless answer unless a fresh one is requested', async () => {
+    postMock.mockResolvedValueOnce({ data: { result: 'first', error: null } })
+      .mockResolvedValueOnce({ data: { result: 'second', error: null } });
+    await expect(rpcService.call('getmininginfo')).resolves.toBe('first');
+    await expect(rpcService.call('getmininginfo')).resolves.toBe('first');
+    await expect(rpcService.call('getmininginfo', [], { fresh: true })).resolves.toBe('second');
+    expect(postMock).toHaveBeenCalledTimes(2);
+  });
+
   it('throws when daemon returns RPC error payload', async () => {
     const logSpy = vi.spyOn(logger, 'error').mockImplementation(() => logger as never);
     postMock.mockResolvedValue({

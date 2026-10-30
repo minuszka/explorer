@@ -9,7 +9,9 @@ describe('operator diagnosis route', () => {
   it('returns the shared contract with no-store', async () => {
     const now = new Date().toISOString();
     vi.mocked(getOperatorDiagnosis).mockResolvedValue({ generatedAt: now, registeredCount: 220, maxPenalty: 220,
-      historySince: now, historyLimited: true, nodes: [] });
+      historySince: now, historyLimited: true, nodes: [], dsl: { status: 'unknown', reason: 'Core version unavailable',
+      coreVersion: null, activationHeight: null, enforcementHeight: null, currentEpoch: null, latestCommittedEpoch: null,
+      rule: null, simulation: null } });
     const res = await request(app).get('/api/v1/masternodes/operator-diagnosis');
     expect(res.status).toBe(200); expect(res.headers['cache-control']).toContain('no-store');
     expect(operatorDiagnosisApiResponseSchema.safeParse(res.body).success).toBe(true);

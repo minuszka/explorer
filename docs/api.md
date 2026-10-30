@@ -250,7 +250,7 @@ full live registered masternode list and existing retained history/inventory.
 It starts no collector or network probe. A validated complete `protx list registered 1`
 is required; RPC failure or incomplete state returns 503, with no stale fallback.
 Successful snapshots are shared/cached for 30 seconds. The response includes
-`generatedAt`, `registeredCount`, `maxPenalty`, `historySince`, `historyLimited`,
+`generatedAt`, `registeredCount`, `maxPenalty`, `historySince`, `historyLimited`, `dsl`,
 and nodes with `proTxHash`, `service`, and server-computed `operatorDiagnosis[]`.
 Each diagnosis has `code`, `level`, `evidence`, `message`, `hint`, `since`, `source`,
 and `operatorAction` (highlight eligibility).
@@ -268,6 +268,88 @@ and `operatorAction` (highlight eligibility).
 - `WRONG_CHAIN`: last-known inventory `behind`/`hash_mismatch`. Behind is lag,
   not proof of a fork. Inventory update time is explicitly distinguished from a
   chain-probe timestamp. Version/chain observations do not qualify for orange cues.
+- `DSL_MISSED`: informational, only while `dsl.simulation` exists, the node's
+  `lastServiceEpoch` equals `simulation.asOfEpoch` and its `missedServiceEpochs` is
+  at least the rule's `suspendEpochs`. The counter is consensus state: consecutive
+  committed Sentinel verdicts of MISSED; mass-outage and unobserved epochs neither add
+  to it nor reset it. The hint names what the rule would do under enforcement; that
+  part is a simulation, not consensus state.
+
+`dsl` comes from `dslstatus`, with `getnetworkinfo` and `getblockchaininfo` read
+uncached before and after the registry, and `uptime` read uncached and alone first and
+last, so every other answer falls between two answers of one daemon process (one daemon
+serves the RPC endpoint at a time). Its `status` is `inactive`, `shadow` (verdicts
+recorded, no penalty) or `unknown`, with `reason`, `coreVersion`, `activationHeight`,
+`enforcementHeight` (2147483647 means not set), `currentEpoch` (null while inactive:
+the daemon does not track epochs before activation) and, in shadow mode,
+`latestCommittedEpoch` (the highest `lastServiceEpoch` in the registry, or null while
+every counter still has its default 0).
+
+The daemon does not report its DSL constants, so `rule` (`source`, `epochBlocks`,
+`suspendEpochs`, `banEpochs`, `massOutagePct`) is pinned to the exact build read from
+source and to mainnet: version 230000, `/DeFCoN:23.0.0/`, chain `main`, with 24-block
+epochs, suspension at 4 and service ban at 5 missed epochs, and a 15% mass-outage
+cut-off. On mainnet that build compiles in DSL activation at height 145464 and no
+enforcement height; only devnet and regtest take DSL heights from arguments. `dslstatus`
+must report exactly those heights, so `enforcing` must be false.
+
+`dslstatus` and the registry are read in parallel between the two tip reads, so either
+may describe any tip in that range. `active` and `enforcing` must hold for the whole
+range: a read that crosses the activation height is ambiguous. Once active, the epoch's
+24-block range must also contain a tip from that range. The daemon's DSL tick does not
+run while it syncs, so a stalled epoch fails this; so does, briefly, a tick that has
+not yet processed a just-connected boundary block.
+
+The registry is read at the tip, and a reorg and its reversal between the tip reads
+could leave it describing a branch the last tip no longer holds. Its DSL counters are
+therefore used only when they equal those at the best ChainLock: `getbestchainlock`
+is read after the first `uptime`, both anchors also read `getblockhash` at its height
+and `spork active`, and `protx list registered` is also read at that height. While
+spork 19 is active the daemon does not connect a block that conflicts with a known
+ChainLock, so that block, and the commitments under it, stay in every chain read from
+the first anchor on.
+
+These reads support that conclusion only under assumptions they cannot check:
+
+- spork 19 stays active for the whole read (switching it off and on again between the
+  two reads would also reset the daemon's best ChainLock);
+- the network has no conflicting ChainLocks;
+- one daemon process serves the RPC endpoint at a time;
+- neither the Explorer's nor the daemon's clock jumps by more than a few seconds
+  between the `uptime` reads.
+
+The result is `unknown` with no rule, simulation or `DSL_MISSED` when:
+
+- the version reads fail or differ, or the build is another one;
+- the `uptime` reads fail, the daemon has run for under 10 seconds, or the start times
+  they imply differ by more than 3 seconds (a restart during the read);
+- a tip read fails, or the network is not `main`;
+- `dslstatus` fails, reports other heights or does not fit the tip range;
+- the tip crossed more than one epoch boundary during the read;
+- a committed epoch is ahead of `currentEpoch`;
+- the registry holds a commitment whose block (`(E + 1) * 24` for epoch E) is above
+  the last tip read;
+- once active: no ChainLock is known, the block at its height differs from it in
+  either anchor, spork 19 is not active in both reads, or the registry at its height
+  cannot be read;
+- the registry's nodes or DSL counters differ from those at the ChainLock height (for
+  example while the ChainLock trails a block that applied a commitment);
+- the registry lacks valid DSL counters.
+
+These failures do not fail the endpoint.
+
+Epoch E is committed in the block that opens E + 1 and a commitment can be skipped.
+`simulation` therefore exists only in shadow mode when `latestCommittedEpoch` is at
+most one epoch behind the last closed epoch at the last tip read; otherwise `reason`
+says that no commitment has been applied or how far the latest one lags. It is bound
+to that commitment and has these fields:
+
+- `asOfEpoch`: the commitment's epoch;
+- `wouldSuspend` and `wouldBan`: nodes at or above the suspension and ban thresholds;
+- `uncounted`: registered nodes whose counter that commitment did not write.
+
+The simulation ignores PoSe bans. Enforced DSL state is not interpreted: no verified
+rule has an enforcement height.
 
 Inventory is matched by exact IP/port and compatible registration hash. Only chain
 action evidence qualifies for orange highlighting in this phase. The UI expires

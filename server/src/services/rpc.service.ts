@@ -83,11 +83,12 @@ class RpcService {
     }
   }
 
-  async call<T = unknown>(method: string, params: unknown[] = []): Promise<T> {
+  /** `fresh` skips the cache and any in-flight request, for answers that must belong to this moment. */
+  async call<T = unknown>(method: string, params: unknown[] = [], options: { fresh?: boolean } = {}): Promise<T> {
     const ttl = CACHE_TTL_MS[method.toLowerCase()];
     // Only cache parameterless lookups; parameterized calls (getblock, getrawtransaction…)
     // are content-addressable and managed elsewhere.
-    const cacheable = ttl != null && params.length === 0;
+    const cacheable = !options.fresh && ttl != null && params.length === 0;
     const cacheKey = cacheable ? method.toLowerCase() : null;
 
     if (cacheKey) {
