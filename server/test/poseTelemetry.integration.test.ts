@@ -200,6 +200,57 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     expect(recovered.events[0]).toMatchObject({ observerCount: 2, observationCount: 2 });
   });
 
+  it.each(['report', 'event'])('recovers a valid repeated observation after an initially future %s timestamp', async (futureField) => {
+    const now = Date.now();
+    const validTime = new Date(now - 60000).toISOString();
+    const futureTime = new Date(now + 86400000).toISOString();
+    const valid = payload({ observedAt: validTime, poseEvents: [poseEvent({ eventAt: validTime })] });
+    const first = futureField === 'report' ? { ...valid, observedAt: futureTime }
+      : { ...valid, poseEvents: [{ ...valid.poseEvents[0], eventAt: futureTime }] };
+    await networkNoiseService.ingest(first);
+    expect((await poseTelemetryService.getEvents(query())).total).toBe(0);
+    const original = await PoseObservation.findOne().lean();
+    expect(original).not.toBeNull();
+    await networkNoiseService.ingest({ ...valid, sequence: valid.sequence + 1 });
+    const data = await poseTelemetryService.getEvents(query());
+    expect(data).toMatchObject({ total: 1, observationCount: 1, chainVerifiedEvents: 0 });
+    expect(data.events[0]).toMatchObject({ observerCount: 1, canonicalStatus: 'unverified' });
+    const repaired = await PoseObservation.findOne().lean();
+    expect(repaired?.observedAt.toISOString()).toBe(validTime);
+    expect(repaired?.eventAt.toISOString()).toBe(validTime);
+    expect(repaired?.expiresAt).toEqual(original?.expiresAt);
+    expect(repaired?.receivedAt).toEqual(original?.receivedAt);
+    expect(await PoseObservation.countDocuments()).toBe(1);
+  });
+
+  it('never combines timestamps from separate reports or overwrites an already visible report', async () => {
+    const now = Date.now();
+    const validTime = new Date(now - 60000).toISOString();
+    const futureTime = new Date(now + 86400000).toISOString();
+    const source = payload({ observedAt: futureTime, poseEvents: [poseEvent({ eventAt: futureTime })] });
+    await poseTelemetryService.ingest(source);
+    await poseTelemetryService.ingest({ ...source, observedAt: validTime });
+    await poseTelemetryService.ingest({ ...source, poseEvents: [{ ...source.poseEvents[0], eventAt: validTime }] });
+    expect((await poseTelemetryService.getEvents(query())).total).toBe(0);
+    const valid = { ...source, observedAt: validTime, poseEvents: [{ ...source.poseEvents[0], eventAt: validTime }] };
+    await poseTelemetryService.ingest(valid);
+    await poseTelemetryService.ingest({ ...valid, observedAt: new Date(now - 30000).toISOString() });
+    expect((await PoseObservation.findOne().lean())?.observedAt.toISOString()).toBe(validTime);
+    expect((await poseTelemetryService.getEvents(query())).total).toBe(1);
+  });
+
+  it('does not repair a different incomplete event sharing the same local event ID', async () => {
+    const now = Date.now();
+    const validTime = new Date(now - 60000).toISOString();
+    const event = poseEvent({ eventAt: validTime, eventBlockHeight: null });
+    const source = payload({ observedAt: new Date(now + 86400000).toISOString(), poseEvents: [event] });
+    await poseTelemetryService.ingest(source);
+    await poseTelemetryService.ingest({ ...source, observedAt: validTime,
+      poseEvents: [{ ...event, penalty: event.penalty! + 1 }] });
+    expect((await poseTelemetryService.getEvents(query())).total).toBe(0);
+    expect((await PoseObservation.findOne().lean())?.penalty).toBe(event.penalty);
+  });
+
   it('filters observations by the complete ban anchor without promoting log evidence', async () => {
     const first = payload();
     const event = first.poseEvents[0];

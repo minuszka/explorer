@@ -53,12 +53,21 @@ describe('structured telemetry persistence and retry boundaries', () => {
   });
 
   it('accepts only duplicate-key races and reports actual partial inserts', async () => {
-    vi.mocked(PoseObservation.bulkWrite).mockRejectedValue({
+    vi.mocked(PoseObservation.bulkWrite).mockRejectedValueOnce({
       code: 11000, writeErrors: [{ code: 11000 }], result: { upsertedCount: 1 },
     });
     const result = await networkNoiseService.ingest(posePayload());
     expect(result.acceptedPoseObservations).toBe(1);
     expect(NetworkNoiseNodeState.updateOne).toHaveBeenCalledOnce();
+  });
+
+  it('keeps the batch retryable if the timestamp correction fails', async () => {
+    const error = new Error('timestamp correction failed');
+    // Fail the second write, after the insert phase succeeds.
+    vi.mocked(PoseObservation.bulkWrite).mockResolvedValueOnce({ upsertedCount: 0 } as never).mockRejectedValueOnce(error);
+    await expect(networkNoiseService.ingest(posePayload())).rejects.toBe(error);
+    expect(NetworkNoiseNodeState.updateOne).not.toHaveBeenCalled();
+    expect(networkNoiseBatchService.complete).not.toHaveBeenCalled();
   });
 
   it('propagates a non-duplicate state-write failure so the batch can retry', async () => {

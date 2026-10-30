@@ -36,13 +36,43 @@ class PoseTelemetryService {
         upsert: true,
       } };
     });
+    let inserted = 0;
     try {
       const result = await PoseObservation.bulkWrite(operations, { ordered: false });
-      return result.upsertedCount;
+      inserted = result.upsertedCount;
     } catch (error) {
       if (!isDuplicateKeyOnly(error)) throw error;
-      return (error as { result?: { upsertedCount?: number } }).result?.upsertedCount ?? 0;
+      inserted = (error as { result?: { upsertedCount?: number } }).result?.upsertedCount ?? 0;
     }
+
+    // A future timestamp in the first report must not hide a later valid report
+    // of the same event. Repair only an invisible record, using both timestamps
+    // from the same non-future report; retain the first receipt and TTL.
+    const observedAt = new Date(payload.observedAt);
+    const corrections = observedAt <= receivedAt ? payload.poseEvents.flatMap((event) => {
+      const eventAt = new Date(event.eventAt);
+      if (eventAt > receivedAt) return [];
+      const identity = poseObservationIdentity(payload.nodeId, event);
+      return [{ updateOne: {
+        filter: {
+          observationKey: identity.observationKey,
+          kind: event.kind, eventBlockHeight: event.eventBlockHeight, eventBlockHash: event.eventBlockHash,
+          quorumType: event.quorumType, quorumHash: event.quorumHash, proTxHash: event.proTxHash,
+          previousPenalty: event.previousPenalty, penalty: event.penalty,
+          poseBanHeight: event.poseBanHeight, memberValid: event.memberValid,
+          $or: [{ observedAt: { $gt: receivedAt } }, { eventAt: { $gt: receivedAt } }],
+        },
+        update: { $set: {
+          eventAt, observedAt, eventId: event.eventId, sample: event.sample ?? null,
+          nodeRole: payload.nodeRole, agentVersion: payload.agentVersion,
+          walletVersion: payload.snapshot.walletVersion ?? null, sequence: payload.sequence,
+          snapshotBlockHeight: payload.snapshot.blockHeight ?? null,
+          snapshotBlockHash: payload.snapshot.bestBlockHash ?? null,
+        } },
+      } }];
+    }) : [];
+    if (corrections.length) await PoseObservation.bulkWrite(corrections, { ordered: false });
+    return inserted;
   }
 
   async getEvents(query: PoseEventsQuery): Promise<PoseObservedEventsContract> {

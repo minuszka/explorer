@@ -225,7 +225,11 @@ server-receipt times, and explicitly named `snapshotBlockHeight` /
 `snapshotBlockHash`. It stores no reported IP or peer IP. Its independent
 `POSE_OBSERVATION_TTL_DAYS` retention defaults to 365 days (range 1–1825), measured
 from the first server receipt. Changing retention affects new records only;
-replays neither extend expiry nor replace the first report's metadata.
+replays do not extend expiry. When the stored event or report time is still in
+the future, a later report of the same event can replace those timestamps and
+report metadata only if both times in that single report are not in the future.
+The original receipt time and expiry remain unchanged. A visible first report
+is not replaced; a different incomplete event sharing a local ID is not merged.
 
 A complete candidate identity is event block height and hash + quorum type and
 base hash + proTxHash + event kind. Each reporter contributes once per candidate
