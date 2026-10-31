@@ -6,9 +6,9 @@
       "path": "scripts/ops/lib.sh",
       "status": "supported",
       "owner": "DeFTrack maintainers",
-      "purpose": "Shared safety, configuration, privilege, path, health-check, and credential helpers for supported operations.",
+      "purpose": "Shared safety, configuration, privilege, path, health-check, client-publish, and credential helpers for supported operations.",
       "invocation": "Internal library; source only from scripts/ops/*.sh.",
-      "safety": "Strict shell mode, path containment, hidden secret values, and temporary MongoDB config files with mode 0600."
+      "safety": "Strict shell mode, path containment, hidden secret values, temporary MongoDB config files with mode 0600, and client files published by rename with earlier hashed assets kept."
     },
     {
       "path": "scripts/ops/preflight.sh",
@@ -22,9 +22,9 @@
       "path": "scripts/ops/deploy.sh",
       "status": "supported",
       "owner": "DeFTrack maintainers",
-      "purpose": "Deploy a verified production branch to the systemd-managed DeFTrack service.",
-      "invocation": "npm run ops:deploy -- --dry-run; npm run ops:deploy",
-      "safety": "Requires a clean checkout on the expected branch, uses fast-forward-only Git updates, runs checks and build before restart, and verifies readiness."
+      "purpose": "Deploy a verified production branch to the systemd-managed DeFTrack service, or roll it back to an earlier commit.",
+      "invocation": "npm run ops:deploy -- --dry-run; npm run ops:deploy; npm run ops:deploy -- --expect-commit <full hash>; npm run ops:deploy -- --rollback-to <commit>",
+      "safety": "Runs one deploy or rollback at a time, requires a clean checkout on the expected branch, can require an exact remote commit, uses fast-forward-only Git updates, runs checks and build before restart, builds the client beside the live one so a failed build leaves it untouched, limits rollbacks to earlier commits, and verifies readiness."
     },
     {
       "path": "scripts/ops/backup.sh",

@@ -136,3 +136,99 @@ wait_for_health() {
 
   return 1
 }
+
+# Publishes a finished client build into the directory the server reads. The running
+# server keeps its index.html in memory and asks for that build's hashed files from disk,
+# and browser tabs opened before the switch ask for lazy chunks long after it. So files
+# arrive by rename with index.html last, and no hashed file goes away here: whichever server
+# is running may need any of them until confirm_client_release is told that the new one is ready.
+# The records of the releases live elsewhere, because everything in the target is public.
+# Lists are written to a file before they are acted on: inside a process substitution a failure of
+# find, sort or comm would pass unnoticed, and an incomplete list would be taken for a complete one.
+publish_client_build() {
+  local staging="$1"
+  local target="$2"
+  local releases="$3"
+  local known="$releases/.known"
+  local scan="$releases/.scan"
+  local unrecorded="$releases/.unrecorded"
+  local attempt number rel
+
+  [[ -f "$staging/index.html" ]] || die "Client build has no index.html: $staging"
+  [[ -n "$(find "$staging/assets" -type f -print -quit 2>/dev/null)" ]] || die "Client build has no assets: $staging"
+
+  mkdir -p "$target/assets" "$releases"
+
+  # Numbered, not timed: a clock that steps back must not make the newest record look the oldest.
+  number="$(find "$releases" -type f \( -name '*.list' -o -name '*.attempt' \) -printf '%f\n' | sed 's/[^0-9].*//' | LC_ALL=C sort | tail -n 1)"
+  number="$((10#${number:-0} + 1))"
+
+  # Files built in place have no record; together they count as one release.
+  find "$releases" -type f \( -name '*.list' -o -name '*.attempt' \) -exec cat {} + | LC_ALL=C sort -u > "$known"
+  (cd "$target" && find assets -type f | LC_ALL=C sort) | LC_ALL=C comm -23 - "$known" > "$unrecorded"
+  rm -f -- "$known"
+  if [[ -s "$unrecorded" ]]; then
+    mv -f -- "$unrecorded" "$releases/$(printf '%012d' "$number").list"
+    number="$((number + 1))"
+  else
+    rm -f -- "$unrecorded"
+  fi
+
+  # Recorded first, so that an interrupted publish still accounts for every file it moved.
+  attempt="$releases/$(printf '%012d' "$number").attempt"
+  (cd "$staging" && find . -type f | sed 's#^\./##' | LC_ALL=C sort) > "$attempt"
+
+  while IFS= read -r rel; do
+    [[ "$rel" != "index.html" ]] || continue
+    mkdir -p -- "$target/$(dirname -- "$rel")"
+    mv -f -- "$staging/$rel" "$target/$rel"
+  done < "$attempt"
+  mv -f -- "$staging/index.html" "$target/index.html"
+
+  # Public files that left the build go too; hashed assets wait for confirm_client_release.
+  (cd "$target" && find . -type f ! -path './assets/*' | sed 's#^\./##') > "$scan"
+  while IFS= read -r rel; do
+    grep -Fxq -- "$rel" "$attempt" || rm -f -- "$target/$rel"
+  done < "$scan"
+  rm -f -- "$scan"
+
+  log "Client build published; no hashed asset was removed"
+}
+
+# Call once the service is ready with the newest published build, when nothing running needs an
+# older file. Only such a build counts as a release, so retries cannot push out the one that was
+# running. A build that never got this far still stays while it is newer than the oldest kept
+# release, because a service that restarted on its own may have served it.
+confirm_client_release() {
+  local target="$1"
+  local releases="$2"
+  local keep_releases="$3"
+  local records="$releases/.records"
+  local kept="$releases/.kept"
+  local stale="$releases/.stale"
+  local latest oldest old rel
+
+  latest="$(find "$releases" -type f -name '*.attempt' | LC_ALL=C sort | tail -n 1)"
+  [[ -n "$latest" ]] || die "No published client build to confirm: $releases"
+  mv -f -- "$latest" "${latest%.attempt}.list"
+
+  oldest="$(find "$releases" -type f -name '*.list' -printf '%f\n' | LC_ALL=C sort | tail -n "$keep_releases" | sed -n 1p)"
+  find "$releases" -type f \( -name '*.list' -o -name '*.attempt' \) -printf '%f\n' | LC_ALL=C sort > "$records"
+
+  # The files go first and their records after them: a stop at any point leaves every file on disk
+  # accounted for, so that the next publish cannot take it for a build made in place.
+  LC_ALL=C awk -v oldest="$oldest" '$0 >= oldest' "$records" | (cd "$releases" && xargs -d '\n' cat) | LC_ALL=C sort -u > "$kept"
+  [[ -s "$kept" ]] || die "Client release records are empty: $releases"
+  (cd "$target" && find assets -type f | LC_ALL=C sort | LC_ALL=C comm -23 - "$kept") > "$stale"
+  while IFS= read -r rel; do
+    rm -f -- "$target/$rel"
+  done < "$stale"
+
+  LC_ALL=C awk -v oldest="$oldest" '$0 < oldest' "$records" > "$stale"
+  while IFS= read -r old; do
+    rm -f -- "$releases/$old"
+  done < "$stale"
+  rm -f -- "$stale" "$kept" "$records"
+
+  log "Client release confirmed; older hashed assets than the last $keep_releases releases are gone"
+}

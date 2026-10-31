@@ -39,6 +39,7 @@ Run the scripts from the checkout, as the account that owns it. `systemctl` and 
 | `ENV_FILE` | none | `$APP_DIR/.env` | preflight, backup, restore |
 | `MONGODB_URI` | none | read from `ENV_FILE` | preflight, backup, restore |
 | `DEPLOY_BRANCH` | `--branch` | `main` | deploy |
+| `CLIENT_KEEP_RELEASES` | none | `3` | deploy |
 | `BACKUP_DIR` | `--backup-dir` | `$APP_DIR/backups/mongodb` | backup, restore |
 | `BACKUP_KEEP_DAYS` | `--keep-days` | `14` | backup |
 | `APP_OWNER` | none | owner of `APP_DIR` | deploy, when run as root |
@@ -115,14 +116,56 @@ The workflow runs these steps in order:
 3. Fetches `origin/<branch>` and applies it with `git merge --ff-only`.
 4. Installs the lockfile with `npm ci`.
 5. Runs lint and the CI tests.
-6. Builds the shared, server and client workspaces.
-7. Restarts the service and polls readiness for about a minute (30 attempts, 2 seconds apart).
+6. Builds the shared and server workspaces, and builds the client into `client/.release-staging/dist`, beside the published `client/dist`.
+7. Publishes the client: every new file moves into `client/dist` by rename, `index.html` last. Earlier hashed assets stay in place.
+8. Restarts the service and polls readiness for about a minute (30 attempts, 2 seconds apart).
+9. Once the service is ready, counts this build as a release and removes hashed assets older than the last `CLIENT_KEEP_RELEASES` releases.
 
 If readiness does not recover, the deploy prints the service status and the last 50 journal lines, then exits with an error.
 
-Because preflight includes the readiness check, a deploy refuses to start while the running service is unhealthy. Restore the service first (see [Troubleshooting](#troubleshooting)).
+Only one deploy or rollback can run in a checkout at a time. Another one stops at once with an error, before it changes anything. The lock ends with the process, however it ends, so there is nothing to clean up after an interruption. A dry run does not take it.
+
+Because preflight includes the readiness check, a deploy refuses to start while the running service is unhealthy. Restore the service first (see [Troubleshooting](#troubleshooting)), or roll back (see [Rollback](#rollback)).
 
 `--skip-tests` skips lint and the CI tests. Use it only in an approved emergency. It never skips the build or the readiness check after the restart.
+
+`--expect-commit <full hash>` stops after the fetch, before the checkout moves, unless the remote branch is exactly at that commit and the checkout holds no commits beyond it. Use it to deploy the release that was reviewed rather than whatever the branch holds by then. A dry run does not fetch, so it checks only the form of the hash.
+
+### The client during a deploy
+
+The running server reads `index.html` into memory when it starts and serves everything else from `client/dist`, so emptying that folder would break it. A deploy therefore never builds into `client/dist`:
+
+- If the client build fails, `client/dist` and the running service are untouched. The checkout has already moved forward, and the shared and server builds may have run; the running service does not reload them, but it would start from them if it restarted. Fix the cause and deploy again, or roll back.
+- Until the restart, the old server keeps working: its page and all of its hashed files are still there. Files with fixed names, such as `robots.txt`, change at the publish step.
+- If the deploy stops after publishing, before the service is ready, no hashed asset has been removed and the running service keeps its files. Deploying again is safe. Only a build that reached readiness counts as a release, so retries cannot push out the release that was running. A build that did not get that far still stays for as long as it is newer than the oldest kept release, because the service may have restarted on its own and served it.
+- After the restart, browser tabs opened earlier can still load the pages they have not visited yet. Hashed assets stay for the last `CLIENT_KEEP_RELEASES` releases (at least 2), counted in `client/.release-records/dist/`. A tab older than that gets a 404 for a page it has not loaded, and needs a reload.
+- The restart itself still interrupts requests for a few seconds.
+
+A plain `npm run build` in production empties `client/dist` and breaks the running server's pages until the next restart. Use `ops:deploy` there.
+
+### A release that changes the deploy itself
+
+A deploy runs the script that was in the checkout when it started; fast-forwarding does not swap it mid-run. For a release that changes `scripts/ops/`, or after a rollback past such a release, move the checkout first so the new script does the work:
+
+```bash
+git fetch origin main && git merge --ff-only origin/main
+npm run ops:deploy
+```
+
+## Rollback
+
+Move the checkout back to an earlier commit of the deploy branch and rebuild it:
+
+```bash
+npm run ops:deploy -- --rollback-to <commit> --dry-run
+npm run ops:deploy -- --rollback-to <commit> --skip-tests
+```
+
+A rollback follows the deployment steps from `npm ci` onward, including the separate client build, the publish step and the readiness check, with `git reset --hard` in place of the fetch. Preflight skips the readiness check, because the service may be the reason for the rollback. The target must be an ancestor of the current commit, and the worktree must be clean. The next deploy fast-forwards again.
+
+While a rollback runs, an untracked `ROLLBACK-IN-PROGRESS` file keeps the worktree dirty. The checkout already holds the target's scripts by then, and those may not know the lock, but their preflight refuses a dirty worktree, so `ops:deploy` cannot start beside the rollback. The file goes when the rollback ends. If Git is set to hide untracked files (`status.showUntrackedFiles=no`), this cannot work, so the rollback stops before changing anything; remove that setting and run it again.
+
+A rollback does not touch MongoDB. Restore a backup only if data was damaged (see [MongoDB Restore](#mongodb-restore)).
 
 ## MongoDB Backup
 
@@ -242,4 +285,6 @@ To prevent this, give the daemon unit a long `TimeoutStopSec`, as the reference 
 
 **The site header shows an old block height or "Delayed", but `/api/sync` on the host is current.** Check the Cloudflare Browser Cache TTL (see [Cloudflare](#cloudflare)).
 
-**The deploy refuses to start.** Preflight has failed, or the checkout is not on the deploy branch. The log line names the failing check: a dirty worktree, a missing environment key, the wrong branch or failed readiness.
+**The deploy refuses to start.** Preflight has failed, or the checkout is not on the deploy branch. The log line names the failing check: a dirty worktree, a missing environment key, the wrong branch or failed readiness. A dirty worktree may be a `ROLLBACK-IN-PROGRESS` file: a rollback is running, or one was killed and the checkout now holds a script that cannot clear it. Once no deploy is running, delete the file.
+
+**A page stays blank after a deploy.** The tab is older than the kept releases and asks for a file that is gone. A reload fixes it.

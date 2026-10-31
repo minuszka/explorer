@@ -23,7 +23,9 @@ the origin of `VITE_API_URL` when that is set, otherwise on the page origin.
 ## Production
 
 With `NODE_ENV=production` (set in `.env` or in the environment) the server also serves the built client from
-`client/dist`, so run `npm run build` first. Production additionally requires:
+`client/dist`, so run `npm run build` first. To update a running server, use `npm run ops:deploy` instead,
+because a plain build empties that folder under it (see [Operations](operations.md#the-client-during-a-deploy)).
+Production additionally requires:
 
 - `RPC_PASS` (startup fails without it)
 - `PRE_RELEASE_NODES_API_KEY`, but only when `PRE_RELEASE_NODES_API_URL` is set
