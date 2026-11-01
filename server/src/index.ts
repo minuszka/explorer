@@ -17,6 +17,7 @@ import { networkHealthService } from './services/networkHealth.service';
 import { seedNodeService } from './services/seedNode.service';
 import { nodeInventoryService } from './services/nodeInventory.service';
 import { poseChainService } from './services/poseChain.service';
+import { networkNoiseRetentionService } from './services/networkNoiseRetention.service';
 import { cachePrewarmService } from './services/cachePrewarm.service';
 import { realtimeService } from './services/realtime.service';
 import { telegramService } from './services/telegram.service';
@@ -224,6 +225,7 @@ function startBackgroundServices(reason: string): void {
   });
   cachePrewarmService.start();
   poseChainService.start().catch(() => logger.warn('PoSe chain collector could not start'));
+  networkNoiseRetentionService.start().catch(() => logger.warn('Network noise receipt retention could not start'));
   telegramService.start();
 }
 
@@ -458,6 +460,7 @@ async function stopServices(): Promise<void> {
   cachePrewarmService.stop();
   networkHealthService.stop();
   seedNodeService.stop();
+  networkNoiseRetentionService.stop();
   await Promise.all([
     syncService.stop(),
     masternodePollerService.stop(),

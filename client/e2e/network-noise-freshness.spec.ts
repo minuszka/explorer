@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { stubApi } from './apiStub';
 
 const path = '/api/v1/network-noise/summary';
@@ -34,14 +34,16 @@ test('a fresh clean report remains quiet @smoke', async ({ page }) => {
 });
 
 test('a nearly expired reporter becomes unknown without waiting for the next fetch @smoke', async ({ page }) => {
-  await page.clock.install();
+  const now = Date.now();
+  await page.clock.setFixedTime(now);
   const data = summary(1);
-  data.data.nodes[0].lastReportedAt = new Date(Date.now() - 179000).toISOString();
+  data.data.generatedAt = new Date(now).toISOString();
+  data.data.nodes[0].lastReportedAt = new Date(now - 179000).toISOString();
   await stubApi(page, { [path]: data });
   await page.goto('/devtools/network-noise');
   const noise = page.locator('.nn-stat').filter({ hasText: 'Current noise' });
   await expect(noise.locator('strong')).toHaveText('Quiet');
-  await page.clock.fastForward(3000);
+  await page.clock.setFixedTime(now + 3000);
   await expect(noise.locator('strong')).toHaveText('Unknown');
   await expect(page.locator('.nn-table tbody tr').first()).toContainText('STALE');
 });
@@ -85,6 +87,32 @@ test('a future snapshot timestamp cannot establish current noise @smoke', async 
   await stubApi(page, { [path]: data });
   await page.goto('/devtools/network-noise');
   await expect(page.locator('.nn-stat').filter({ hasText: 'Current noise' }).locator('strong')).toHaveText('Unknown');
+});
+
+// The browser clock stays fixed: with a running clock a slightly future report simply ages
+// into the valid range while the assertion retries, and the test proves nothing.
+async function openWithReportAhead(page: Page, aheadMs: number) {
+  const now = Date.now();
+  await page.clock.setFixedTime(now);
+  const data = summary(1);
+  data.data.generatedAt = new Date(now).toISOString();
+  data.data.nodes[0].lastReportedAt = new Date(now + aheadMs).toISOString();
+  await stubApi(page, { [path]: data });
+  await page.goto('/devtools/network-noise');
+}
+
+test('a browser clock a few seconds behind keeps a fresh report current @smoke', async ({ page }) => {
+  await openWithReportAhead(page, 5000);
+  await expect(page.locator('.nn-stat').filter({ hasText: 'Current noise' }).locator('strong')).toHaveText('Quiet');
+  await expect(page.locator('.nn-table tbody tr').first()).not.toContainText('STALE');
+  await expect(page.locator('.nn-table tbody tr').first().locator('td strong', { hasText: /^now$/ })).toBeVisible();
+  await expect(page.getByText('Current report data expired')).toHaveCount(0);
+});
+
+test('a report time beyond the clock tolerance cannot establish current noise @smoke', async ({ page }) => {
+  await openWithReportAhead(page, 5001);
+  await expect(page.locator('.nn-stat').filter({ hasText: 'Current noise' }).locator('strong')).toHaveText('Unknown');
+  await expect(page.locator('.nn-table tbody tr').first()).toContainText('STALE');
 });
 
 test('a failed summary request does not claim a quiet network @smoke', async ({ page }) => {

@@ -7,6 +7,13 @@ import { isDuplicateKeyOnly } from '../domain/pose/poseTelemetry';
 
 export class NetworkNoiseSequenceConflict extends Error {}
 
+export type SettledRange = { from: number; to: number };
+
+/** Whether receipt retention has recorded this sequence as settled. */
+export function isSettled(ranges: readonly SettledRange[] | null | undefined, sequence: number): boolean {
+  return (ranges ?? []).some(({ from, to }) => from <= sequence && sequence <= to);
+}
+
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object') return Object.fromEntries(
@@ -43,7 +50,9 @@ export const networkNoiseBatchService = {
       baseline = await NetworkNoiseBaseline.findOne({ nodeId: payload.nodeId }).lean();
     }
     if (!baseline) throw new Error('Network noise sequence baseline unavailable');
-    if (payload.sequence <= baseline.legacySequence) return { status: 'duplicate' };
+    if (payload.sequence <= baseline.legacySequence || isSettled(baseline.settledRanges, payload.sequence)) {
+      return { status: 'duplicate' };
+    }
 
     const key = { nodeId: payload.nodeId, sequence: payload.sequence };
     const batchDigest = digest(payload);
@@ -71,6 +80,13 @@ export const networkNoiseBatchService = {
       if (!batch) throw new NetworkNoiseSequenceConflict('Sequence already belongs to a different batch');
     }
     if (batch.complete) return { status: 'duplicate' };
+    // Receipt retention may have settled this sequence and deleted its receipt after
+    // the baseline was read above, and this request may have just recreated it. It
+    // records a sequence before it deletes the receipt, so an old reading never
+    // admits a batch a second time. Only a receipt left untouched for the whole
+    // retention period is ever recorded, so this refuses no batch in progress.
+    const record = await NetworkNoiseBaseline.findOne({ nodeId: payload.nodeId }).select({ settledRanges: 1 }).lean();
+    if (isSettled(record?.settledRanges, payload.sequence)) return { status: 'duplicate' };
     // Stored on the receipt, so an interrupted replacement still merges when retried.
     const resend = batch.replaced === true;
     // The request that created the receipt fixed the batch's arrival and time

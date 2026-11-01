@@ -536,6 +536,12 @@ textarea::placeholder {
   background: var(--error-bg);
 }
 
+.state-panel.route-reload-notice {
+  min-height: 0;
+  margin-bottom: var(--space-4);
+  padding: var(--space-4) var(--space-5);
+}
+
 .skeleton-page {
   padding: 22px 0;
   display: flex;

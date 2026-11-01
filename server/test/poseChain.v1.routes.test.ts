@@ -1,16 +1,23 @@
 import express from 'express';
 import request from 'supertest';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { poseChainApiResponseSchema } from '@defcon/shared/dist/contracts';
 
 const mocks = vi.hoisted(() => ({ getPoseChainData: vi.fn() }));
+const nodeMocks = vi.hoisted(() => ({ getEnrichedNodes: vi.fn() }));
 vi.mock('../src/services/poseChainQuery.service', () => mocks);
-vi.mock('../src/utils/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn() } }));
-import poseChainRoutes from '../src/routes/v1/poseChain.v1.routes';
+vi.mock('../src/services/masternode.service', () => nodeMocks);
+vi.mock('../src/utils/logger', () => ({ logger: { error: vi.fn(), warn: vi.fn(), info: vi.fn(), debug: vi.fn() } }));
+import { config } from '../src/config';
+import { PoseChainState } from '../src/models/PoseChainState';
+import v1Routes from '../src/routes/v1';
 
+// The real /api/v1 router, so that a route mounted behind a dynamic path fails here too.
 const app = express();
-app.use('/api/v1/masternodes', poseChainRoutes);
+app.use('/api/v1', v1Routes);
 describe('PoSe canonical commitment route', () => {
+  const originalPoseChain = { ...config.poseChain };
+  afterEach(() => { Object.assign(config.poseChain, originalPoseChain); });
   beforeEach(() => {
     mocks.getPoseChainData.mockResolvedValue({
       generatedAt: new Date().toISOString(), status: 'disabled',
@@ -20,6 +27,34 @@ describe('PoSe canonical commitment route', () => {
       penaltyCoverage: { enabled: false, commitmentBlocks: 0, verifiedBlocks: 0, pendingBlocks: 0,
         unavailableBlocks: 0, unsupportedBlocks: 0, inconsistentBlocks: 0, notApplicableBlocks: 0 },
     });
+  });
+
+  it('is mounted before the dynamic node route, which still serves other ids', async () => {
+    nodeMocks.getEnrichedNodes.mockResolvedValue([]);
+    expect((await request(app).get('/api/v1/masternodes/pose-chain')).status).toBe(200);
+    expect(mocks.getPoseChainData).toHaveBeenCalledTimes(1);
+    expect(nodeMocks.getEnrichedNodes).not.toHaveBeenCalled();
+
+    const other = await request(app).get(`/api/v1/masternodes/${'a'.repeat(64)}`);
+    expect(other.status).toBe(404);
+    expect(other.body.error.message).toBe('Masternode not found');
+    expect(nodeMocks.getEnrichedNodes).toHaveBeenCalledTimes(1);
+    expect(mocks.getPoseChainData).toHaveBeenCalledTimes(1);
+  });
+
+  it('answers with the real service as disabled while the collector is off', async () => {
+    const { getPoseChainData } = await vi.importActual<typeof import('../src/services/poseChainQuery.service')>(
+      '../src/services/poseChainQuery.service');
+    mocks.getPoseChainData.mockImplementationOnce(getPoseChainData);
+    Object.assign(config.poseChain, { enabled: false, attributionEnabled: false });
+    vi.spyOn(PoseChainState, 'findOne').mockReturnValue({ lean: async () => null } as never);
+
+    const response = await request(app).get('/api/v1/masternodes/pose-chain').query({ hours: 24, limit: 1 });
+    expect(response.status).toBe(200);
+    expect(response.headers['cache-control']).toContain('no-store');
+    expect(poseChainApiResponseSchema.safeParse(response.body).success).toBe(true);
+    expect(response.body.data).toMatchObject({ status: 'disabled', total: 0, quorumSummary: [], commitments: [],
+      penaltyCoverage: { enabled: false, commitmentBlocks: 0 }, coverage: { caughtUp: false, checkedAt: null } });
   });
 
   it('returns schema-checked no-store coverage and normalizes filters', async () => {

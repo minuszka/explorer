@@ -363,6 +363,12 @@ export function loadConfig(env: Environment = process.env) {
         min: 1,
         max: 1825,
       }),
+      // Batch receipts untouched for this long are deleted after their
+      // sequences are recorded as settled.
+      receiptRetentionDays: parseIntEnv(env, 'NETWORK_NOISE_RECEIPT_RETENTION_DAYS', 30, issues, {
+        min: 1,
+        max: 1825,
+      }),
     },
 
     providerLookup: {

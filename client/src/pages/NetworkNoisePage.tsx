@@ -23,6 +23,9 @@ const WINDOW_OPTIONS = [
 
 const CHAIN_SIGNALS = new Set(['chainlock_conflict', 'chain_tip_divergence', 'reorg_attempt']);
 
+// A browser clock slightly behind the server must not turn a fresh report into Unknown.
+const CLOCK_TOLERANCE_MS = 5000;
+
 function signalLabel(value: string): string {
   return value
     .split('_')
@@ -33,7 +36,7 @@ function signalLabel(value: string): string {
 function timeAgo(value: string | null): string {
   if (!value) return '-';
   const age = Date.now() - new Date(value).getTime();
-  if (!Number.isFinite(age) || age < 0) return '-';
+  if (!Number.isFinite(age) || age < -CLOCK_TOLERANCE_MS) return '-';
   const minutes = Math.floor(age / 60_000);
   if (minutes < 1) return 'now';
   if (minutes < 60) return `${minutes}m ago`;
@@ -67,13 +70,13 @@ export default function NetworkNoisePage() {
   const maxAge = data ? data.staleAfterSeconds * 1000 : 0;
   const reportIsFresh = (reportedAt: string) => {
     const age = now - Date.parse(reportedAt);
-    return Number.isFinite(age) && age >= 0 && age <= maxAge;
+    return Number.isFinite(age) && age >= -CLOCK_TOLERANCE_MS && age <= maxAge;
   };
   const generatedAge = data ? now - Date.parse(data.generatedAt) : NaN;
   const receivedAge = now - dataUpdatedAt;
   const serverFreshNodes = data?.nodes.filter((node) => !node.isStale) ?? [];
   const snapshotCurrent = Boolean(data && maxAge > 0 && Number.isFinite(generatedAge)
-    && generatedAge >= -5000 && generatedAge <= maxAge && receivedAge >= 0 && receivedAge <= maxAge
+    && generatedAge >= -CLOCK_TOLERANCE_MS && generatedAge <= maxAge && receivedAge >= 0 && receivedAge <= maxAge
     && serverFreshNodes.length === data.summary.reportingNodes
     && serverFreshNodes.every((node) => reportIsFresh(node.lastReportedAt)));
   const hasFreshReports = Boolean(snapshotCurrent && data && data.summary.reportingNodes > 0);

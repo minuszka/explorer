@@ -8,8 +8,10 @@ import { AutoRefreshProvider } from './context/AutoRefreshContext';
 import { queryClient } from './queryClient';
 import './styles/globals.css';
 import { readBootData } from './utils/bootData';
+import { watchChunkFailures } from './utils/releaseReload';
 
 applyThemeAttribute(resolveInitialTheme());
+watchChunkFailures();
 
 // Server-injected first-paint data (see buildBootScript in server/src/index.ts).
 // Seeded with updatedAt: 0 so it renders instantly but is treated as stale —

@@ -1,10 +1,10 @@
 import express from 'express';
 import request from 'supertest';
-import routes from '../src/routes/v1/operatorDiagnosis.v1.routes';
+import routes from '../src/routes/v1';
 import { getOperatorDiagnosis } from '../src/services/operatorDiagnosis.service';
 import { operatorDiagnosisApiResponseSchema } from '@defcon/shared/dist/contracts';
 vi.mock('../src/services/operatorDiagnosis.service', () => ({ getOperatorDiagnosis: vi.fn() }));
-const app = express(); app.use('/api/v1/masternodes', routes);
+const app = express(); app.use('/api/v1', routes);
 describe('operator diagnosis route', () => {
   it('returns the shared contract with no-store', async () => {
     const now = new Date().toISOString();

@@ -76,6 +76,16 @@ log "Creating compressed MongoDB dump"
 mongo_config="$(create_mongo_tool_config "$mongo_uri")"
 mongodump --config="$mongo_config" --out="$backup_path" --gzip --quiet
 
+# Network noise receipt retention records a sequence on the node's baseline before it
+# deletes the receipt. Baselines read after the receipts therefore cover every receipt
+# missing from the dump, however long it took, so they are read again last.
+baseline_files="$(find "$backup_path" -type f -name 'networknoisebaselines.bson.gz')"
+while IFS= read -r baseline_file; do
+  [[ -n "$baseline_file" ]] || continue
+  mongodump --config="$mongo_config" --out="$backup_path" --gzip --quiet \
+    --db="$(basename "$(dirname "$baseline_file")")" --collection=networknoisebaselines
+done <<< "$baseline_files"
+
 collection_count="$(find "$backup_path" -type f -name '*.bson.gz' | wc -l | tr -d ' ')"
 [[ "$collection_count" -gt 0 ]] || die "Backup contains no BSON collections"
 

@@ -156,6 +156,13 @@ describe('server configuration', () => {
     expect(() => loadConfig({ POSE_OBSERVATION_TTL_DAYS: '1826' })).toThrow(/POSE_OBSERVATION_TTL_DAYS/);
   });
 
+  it('bounds batch receipt retention', () => {
+    expect(loadConfig({}).networkNoise.receiptRetentionDays).toBe(30);
+    expect(loadConfig({ NETWORK_NOISE_RECEIPT_RETENTION_DAYS: '90' }).networkNoise.receiptRetentionDays).toBe(90);
+    expect(() => loadConfig({ NETWORK_NOISE_RECEIPT_RETENTION_DAYS: '0' })).toThrow(/NETWORK_NOISE_RECEIPT_RETENTION_DAYS/);
+    expect(() => loadConfig({ NETWORK_NOISE_RECEIPT_RETENTION_DAYS: '1826' })).toThrow(/NETWORK_NOISE_RECEIPT_RETENTION_DAYS/);
+  });
+
   it('leaves canonical collection opt-in and bounds its RPC and reorg budgets', () => {
     expect(loadConfig({}).poseChain).toEqual({ enabled: false, startHeight: 144888, blocksPerRun: 50,
       confirmations: 3, intervalMs: 30000, reorgMaxDepth: 128, membershipRetryBlocks: 5,

@@ -5,6 +5,14 @@ import { Schema, model } from 'mongoose';
 const baselineSchema = new Schema({
   nodeId: { type: String, required: true, unique: true },
   legacySequence: { type: Number, required: true },
+  // Sequences whose receipts retention has settled, as ascending ranges. A sequence
+  // is recorded before its receipt is deleted and refused from then on.
+  settledRanges: {
+    type: [new Schema({ from: { type: Number, required: true }, to: { type: Number, required: true } }, { _id: false })],
+    default: undefined,
+  },
+  // Changes with every write to the ranges, so a stale pass cannot overwrite them.
+  rangesRevision: { type: Number },
 }, { timestamps: true });
 
 const batchSchema = new Schema({

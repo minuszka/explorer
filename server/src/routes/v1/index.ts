@@ -39,10 +39,11 @@ router.use('/masternodes/ban-attribution', heavyEndpointLimiter);
 router.use('/address/:address/graph', heavyEndpointLimiter);
 router.use('/address/:address/rewards', heavyEndpointLimiter);
 
+// Keep these ahead of masternodeV1Routes: its /:id route matches any single path segment.
 router.use('/masternodes', operatorDiagnosisRoutes);
 router.use('/masternodes', banAttributionRoutes);
-router.use('/masternodes', masternodeV1Routes);
 router.use('/masternodes', poseChainRoutes);
+router.use('/masternodes', masternodeV1Routes);
 router.use('/network', networkV1Routes);
 router.use('/rewards', rewardsV1Routes);
 router.use('/blocks', blocksV1Routes);
