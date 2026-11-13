@@ -81,12 +81,13 @@ pre,
 
 /* Layout */
 /* 1240 px of content plus the 32 px side gutter on both sides. The gutter narrows on smaller
-   screens (below) but never disappears. */
+   screens (below) but never disappears. Side padding only: the header, the mobile menu, the main
+   element and the footer set their own top and bottom padding, and these rules load after theirs. */
 .container {
   width: 100%;
   max-width: 1304px;
   margin: 0 auto;
-  padding: 0 32px;
+  padding-inline: 32px;
 }
 
 /* Vertical padding only: the main element is also a .container, and its side gutter must stay. */
@@ -650,7 +651,7 @@ textarea::placeholder {
 
 @media (max-width: 1024px) {
   .container {
-    padding: 0 24px;
+    padding-inline: 24px;
   }
 
   .grid-3 {
@@ -660,7 +661,7 @@ textarea::placeholder {
 
 @media (max-width: 768px) {
   .container {
-    padding: 0 16px;
+    padding-inline: 16px;
   }
 
   .page {

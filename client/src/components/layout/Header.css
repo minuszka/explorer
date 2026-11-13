@@ -10,11 +10,6 @@
   display: flex;
   flex-direction: column;
   gap: 6px;
-}
-
-/* The shared .container rule sets `padding: 0 …` and is loaded later, so a plain .header-shell
-   padding never applied and the top bar touched the header's edges. */
-.header-shell.container {
   padding-top: 7px;
   padding-bottom: 7px;
 }
@@ -300,8 +295,7 @@
   background: var(--bg-soft);
 }
 
-/* Same reason as .header-shell.container: a plain class loses to the later .container padding. */
-.mobile-drawer-inner.container {
+.mobile-drawer-inner {
   padding-top: 12px;
   padding-bottom: 14px;
 }
@@ -442,8 +436,6 @@
 
 @media (max-width: 640px) {
   .header-shell {
-    padding-top: 10px;
-    padding-bottom: 10px;
     gap: 10px;
   }
 
