@@ -28,6 +28,25 @@
   font-size: 0.82rem;
 }
 
+/* The status chips and the "My nodes" toggle share one wrapping row. */
+.mn-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.mn-mine-toggle svg {
+  width: 14px;
+  height: 14px;
+}
+
+.mn-table th.mn-col-star,
+.mn-table td.mn-col-star {
+  width: 1%;
+  padding-right: 0;
+}
+
 .mn-table-wrap {
   border: 1px solid var(--border);
   border-radius: 12px;
@@ -70,32 +89,6 @@
 .mn-country-code {
   margin-left: 0.45rem;
   font-size: 0.76rem;
-}
-
-.mn-source-tag {
-  display: inline-flex;
-  margin-left: 0.45rem;
-  padding: 0.05rem 0.4rem;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--text-muted);
-  font-size: 0.66rem;
-  font-weight: 700;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  vertical-align: middle;
-}
-
-.mn-source-tag.tagged {
-  border-color: rgba(43, 196, 138, 0.42);
-  color: var(--success);
-}
-
-.mn-version-stale {
-  margin-left: 0.4rem;
-  color: var(--warning, var(--text-muted));
-  font-size: 0.72rem;
-  font-weight: 600;
 }
 
 /*
@@ -165,9 +158,10 @@
     font-size: 0.82rem;
   }
 
+  /* The address takes what the status and the star leave on the first line. */
   .mn-table td.mn-col-service {
-    flex: 1 1 60%;
-    min-width: 0;
+    flex: 1 1 0%;
+    min-width: 8rem;
   }
 
   .mn-table .mn-col-service .mono {
@@ -199,6 +193,23 @@
 
   .mn-table td.mn-col-service {
     order: 0;
+  }
+
+  /* The star needs no sort button in the header row of the card view. */
+  .mn-table thead th.mn-col-star {
+    display: none;
+  }
+
+  /* The star ends the first line, after the status, so the address keeps the card's left edge. */
+  .mn-table td.mn-col-star {
+    order: 2;
+    flex: 0 0 auto;
+    width: auto;
+    padding: 0;
+  }
+
+  .mn-table td.mn-col-star:empty {
+    display: none;
   }
 
   .mn-table td.mn-col-status {

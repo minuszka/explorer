@@ -1,8 +1,11 @@
 import express from 'express';
 import request from 'supertest';
+import { Types } from 'mongoose';
 import {
   banWaveAnalysisApiResponseSchema,
+  masternodeDetailApiResponseSchema,
   masternodeEventsApiResponseSchema,
+  masternodeNodeEventsApiResponseSchema,
 } from '@defcon/shared/dist/contracts';
 import masternodesV1Routes from '../src/routes/v1/masternodes.v1.routes';
 import { getEnrichedNodes } from '../src/services/masternode.service';
@@ -268,5 +271,153 @@ describe('masternodes v1 ban wave history', () => {
       _id: 'event-1',
       detectedAt: detectedAt.toISOString(),
     });
+  });
+});
+
+describe('masternodes v1 per-node routes', () => {
+  const app = express();
+  app.use('/api/v1/masternodes', masternodesV1Routes);
+  const proTxHash = 'b'.repeat(64);
+  const node = {
+    id: `${'c'.repeat(64)}-1`,
+    service: '203.0.113.20:8192',
+    ip: '203.0.113.20',
+    port: 8192,
+    status: 'ENABLED',
+    protocol: 70242,
+    lastSeen: null,
+    activeSeconds: 3_600,
+    isTor: false,
+    countryCode: 'DE',
+    countryName: 'Germany',
+    proTxHash,
+    ownerAddress: 'DownerAddress',
+    payoutAddress: 'DpayoutAddress',
+    collateralAddress: 'DcollateralAddress',
+    registeredHeight: 120_000,
+    registeredAt: 1_725_000_000,
+    poseBanHeight: null,
+    poseBanAt: null,
+    poseRevivedHeight: 125_000,
+    posePenalty: 12,
+    operatorPubkey: 'operator-key',
+    votingAddress: 'DvotingAddress',
+    collateralAmount: 10_000,
+    provider: 'Example Host',
+    providerSource: 'mmdb' as const,
+    asn: 64_500,
+    asnOrg: 'Example Host AS',
+    providerTagCidr: null,
+    providerTagSource: null,
+    providerConfidence: null,
+    providerEvidenceUrl: null,
+  };
+
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it('returns one node by proTxHash in the shared detail contract, and 404 for an unknown one', async () => {
+    vi.mocked(getEnrichedNodes).mockResolvedValue([node] as never);
+
+    const res = await request(app).get(`/api/v1/masternodes/${proTxHash}`);
+    expect(res.status).toBe(200);
+    const parsed = masternodeDetailApiResponseSchema.safeParse(res.body);
+    expect(parsed.success).toBe(true);
+    expect(res.body.data).toMatchObject({ id: node.id, proTxHash, posePenalty: 12, poseRevivedHeight: 125_000 });
+
+    const missing = await request(app).get(`/api/v1/masternodes/${'d'.repeat(64)}`);
+    expect(missing.status).toBe(404);
+  });
+
+  it('keeps serving /events when a stored ban has recovered, whose recoveredAt is still a Date', async () => {
+    const detectedAt = new Date(Date.now() - 30 * 60 * 1000);
+    const recoveredAt = new Date(Date.now() - 10 * 60 * 1000);
+    const query = {
+      sort: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      lean: vi.fn().mockResolvedValue([
+        {
+          _id: new Types.ObjectId(),
+          nodeId: node.id,
+          service: node.service,
+          previousStatus: 'POSE_BAN_HEIGHT',
+          currentStatus: 'ENABLED',
+          detectedAt,
+          eventType: 'ban',
+          eventStatus: 'recovered',
+          proTxHash,
+          poseBanHeight: 124_000,
+          detectedHeight: 124_000,
+          recoveredAt,
+          recoveredHeight: 125_000,
+          recoveryTransition: 'POSE_BANNED -> ENABLED',
+          updatedAt: recoveredAt,
+        },
+      ]),
+    };
+    vi.spyOn(MasternodeEvent, 'find').mockReturnValue(query as never);
+
+    // A query of its own, so the route's short cache cannot answer from another test.
+    const res = await request(app).get('/api/v1/masternodes/events').query({ hours: 2, limit: 20 });
+    expect(res.status).toBe(200);
+    expect(masternodeEventsApiResponseSchema.safeParse(res.body).success).toBe(true);
+    expect(res.body.data.events[0]).toMatchObject({ recoveredAt: recoveredAt.toISOString(), poseBanHeight: 124_000 });
+  });
+
+  it('returns the stored events of the node id in the shared event contract', async () => {
+    vi.mocked(getEnrichedNodes).mockResolvedValue([node] as never);
+    const detectedAt = new Date('2026-11-01T10:00:00.000Z');
+    const recoveredAt = new Date('2026-11-02T10:00:00.000Z');
+    const query = {
+      sort: vi.fn().mockReturnThis(),
+      limit: vi.fn().mockReturnThis(),
+      lean: vi.fn().mockResolvedValue([
+        {
+          _id: new Types.ObjectId(),
+          __v: 0,
+          nodeId: node.id,
+          service: node.service,
+          previousStatus: 'POSE_BAN_HEIGHT',
+          currentStatus: 'POSE_BANNED',
+          detectedAt,
+          eventKey: `ban:${proTxHash}:124000`,
+          eventType: 'ban',
+          eventStatus: 'recovered',
+          proTxHash,
+          poseBanHeight: 124_000,
+          detectedHeight: 124_000,
+          recoveredAt,
+          recoveredHeight: 125_000,
+          recoveryTransition: 'POSE_BANNED->ENABLED',
+          updatedAt: recoveredAt,
+        },
+        {
+          _id: new Types.ObjectId(),
+          nodeId: node.id,
+          service: '',
+          previousStatus: 'ENABLED',
+          currentStatus: 'POSE_PENALTY',
+          detectedAt,
+          eventType: 'status',
+          eventStatus: 'observed',
+          proTxHash: null,
+        },
+      ]),
+    };
+    const find = vi.spyOn(MasternodeEvent, 'find').mockReturnValue(query as never);
+
+    const res = await request(app).get(`/api/v1/masternodes/${encodeURIComponent(node.id)}/events`).query({ limit: 50 });
+    expect(res.status).toBe(200);
+    expect(find).toHaveBeenCalledWith({ nodeId: node.id });
+    expect(masternodeNodeEventsApiResponseSchema.safeParse(res.body).success).toBe(true);
+    expect(res.body.data[0]).toMatchObject({
+      proTxHash,
+      eventType: 'ban',
+      poseBanHeight: 124_000,
+      recoveredAt: recoveredAt.toISOString(),
+      detectedAt: detectedAt.toISOString(),
+    });
+    expect(typeof res.body.data[0]._id).toBe('string');
   });
 });

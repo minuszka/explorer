@@ -1,10 +1,13 @@
 import { z } from 'zod';
 import { apiSuccessSchema } from './api';
+import { masternodeEventSchema } from './pose';
 
 const finiteNumber = z.number().finite();
 const integer = z.number().int();
 const nullableInteger = integer.nullable();
 const providerSourceSchema = z.enum(['tor', 'cache', 'ptr', 'mmdb', 'ipapi', 'tag', 'unknown']);
+const nullableText = z.string().nullable();
+const isoDateTime = z.string().datetime({ offset: true });
 
 export const masternodeCountrySchema = z.object({
   countryCode: z.string(),
@@ -149,7 +152,41 @@ export const masternodeNodesSchema = masternodeSnapshotMetaSchema.extend({
   nodes: z.array(masternodeListItemSchema),
 });
 
+/**
+ * `GET /api/v1/masternodes/:id`: one node of the snapshot, found by id (collateral outpoint) or
+ * proTxHash, with the PoSe and key fields the snapshot node also carries.
+ */
+export const masternodeDetailSchema = masternodeNodeSchema
+  .extend({
+    posePenalty: finiteNumber.optional(),
+    poseRevivedHeight: nullableInteger.optional(),
+    operatorPubkey: z.string().nullable().optional(),
+    votingAddress: z.string().nullable().optional(),
+  })
+  .passthrough();
+
 export const masternodeApiResponseSchema = apiSuccessSchema(masternodePayloadSchema);
+export const masternodeDetailApiResponseSchema = apiSuccessSchema(masternodeDetailSchema);
+/**
+ * One event as `GET /api/v1/masternodes/:id/events` sends it: the stored document as JSON, so every
+ * date is ISO text. Ban and recovery records name their registration (proTxHash); plain status
+ * changes carry null there. Kept apart from the shared event schema, which `/events` validates
+ * before its dates are turned into text.
+ */
+export const masternodeNodeEventSchema = masternodeEventSchema
+  .extend({
+    proTxHash: nullableText.optional(),
+    eventType: nullableText.optional(),
+    eventStatus: nullableText.optional(),
+    poseBanHeight: nullableInteger.optional(),
+    detectedHeight: nullableInteger.optional(),
+    recoveredAt: isoDateTime.nullable().optional(),
+    recoveredHeight: nullableInteger.optional(),
+  })
+  .passthrough();
+
+/** `GET /api/v1/masternodes/:id/events`: the stored events of one node id, newest first. */
+export const masternodeNodeEventsApiResponseSchema = apiSuccessSchema(z.array(masternodeNodeEventSchema));
 export const masternodeSummaryApiResponseSchema = apiSuccessSchema(masternodeSummarySchema);
 export const masternodeDistributionApiResponseSchema = apiSuccessSchema(masternodeDistributionSchema);
 export const masternodeNodesApiResponseSchema = apiSuccessSchema(masternodeNodesSchema);
@@ -157,6 +194,8 @@ export const masternodeNodesApiResponseSchema = apiSuccessSchema(masternodeNodes
 export type MasternodeCountryContract = z.infer<typeof masternodeCountrySchema>;
 export type MasternodeProviderContract = z.infer<typeof masternodeProviderSchema>;
 export type MasternodeNodeContract = z.infer<typeof masternodeNodeSchema>;
+export type MasternodeDetailContract = z.infer<typeof masternodeDetailSchema>;
+export type MasternodeNodeEventContract = z.infer<typeof masternodeNodeEventSchema>;
 export type MasternodeAnalyticsContract = z.infer<typeof masternodeAnalyticsSchema>;
 export type MasternodePayloadContract = z.infer<typeof masternodePayloadSchema>;
 export type MasternodeSummaryContract = z.infer<typeof masternodeSummarySchema>;

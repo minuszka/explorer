@@ -3,6 +3,7 @@ import { Link, useSearchParams } from 'react-router-dom';
 import { OperatorDiagnosisPanel, nodePermalink } from '../components/OperatorDiagnosisPanel';
 import { BannedByPanel } from '../components/BannedByPanel';
 import TimeText from '../components/ui/TimeText';
+import { isProTxHash, masternodePath } from '../utils/routes';
 import {
   HiOutlineFire,
   HiOutlineBolt,
@@ -554,7 +555,9 @@ export function BanDetectionPage() {
           <table className="mnh-table">
             <thead><tr><th>Node / Service</th><th>Ban events</th><th>Last ban block</th><th>Last event</th><th>Recorded recovery</th><th>Current state</th><th>Penalty</th><th>Ban cause</th></tr></thead>
             <tbody>{visibleNodes.map((node) => <tr key={node.proTxHash || node.nodeId}>
-              <td className="mnh-mono"><Link to={nodePermalink(node.proTxHash || node.service || node.nodeId)}>{node.service || 'Unknown service'}</Link><div title={node.proTxHash || node.nodeId} className="mnh-meta-line">{truncateHash(node.proTxHash || node.nodeId, 8)}</div></td>
+              <td className="mnh-mono"><Link to={nodePermalink(node.proTxHash || node.service || node.nodeId)}>{node.service || 'Unknown service'}</Link>{isProTxHash(node.proTxHash)
+                ? <div className="mnh-meta-line"><Link to={masternodePath(node.proTxHash)} title={`Open the masternode page: ${node.proTxHash}`}>{truncateHash(node.proTxHash, 8)}</Link></div>
+                : <div title={node.proTxHash || node.nodeId} className="mnh-meta-line">{truncateHash(node.proTxHash || node.nodeId, 8)}</div>}</td>
               <td>{node.banCount}</td>
               <td>{node.lastBanHeight != null ? <Link to={`/block/${node.lastBanHeight}`}>{formatNumber(node.lastBanHeight)}</Link> : 'Unknown'}</td>
               <td><TimeText value={node.lastBanAt} /></td>

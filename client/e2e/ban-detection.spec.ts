@@ -71,3 +71,15 @@ test('failed refresh removes previous current counts @smoke', async ({ page }) =
   await expect(page.getByText('Ban analysis unavailable.', { exact: false })).toBeVisible({ timeout: 20_000 });
   await expect(page.locator('.bd-current-stats')).not.toContainText('217');
 });
+
+test('a node with a proTxHash links to its masternode page; the service still filters this page @smoke', async ({ page }) => {
+  const data = fixture();
+  data.trackedNodes[0].proTxHash = 'a'.repeat(64);
+  await stubApi(page, { [path]: { success: true, data } });
+  await page.goto('/ban-detection');
+  const panel = page.locator('.bd-node-panel tbody');
+  await expect(panel.getByRole('link', { name: 'aaaaaaaa...aaaaaaaa' })).toHaveAttribute('href', `/masternode/${'a'.repeat(64)}`);
+  await expect(panel.getByRole('link', { name: '198.51.100.1:8192' })).toHaveAttribute('href', `/ban-detection?node=${'a'.repeat(64)}`);
+  // "protx-b" is not a proTxHash: its line stays plain text.
+  await expect(panel.locator('tr').nth(1).locator('.mnh-meta-line a')).toHaveCount(0);
+});

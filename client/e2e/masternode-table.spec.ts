@@ -218,3 +218,101 @@ test('without a version snapshot every version is unknown and the page says why 
   await expect(page.getByText('Versions are unavailable right now')).toBeVisible();
   await expect(rows(page).locator('.mn-col-version').filter({ hasNotText: 'unknown' })).toHaveCount(0);
 });
+
+test('a star marks a node, My nodes shows only starred ones after a reload, and the address opens its page @smoke', async ({ page }, testInfo) => {
+  await stubApi(page, api());
+  // Node 121 is banned, so it is starred but not in the active table.
+  await page.addInitScript(([key, value]) => {
+    if (!window.sessionStorage.getItem('seeded')) {
+      window.localStorage.setItem(key, value);
+      window.sessionStorage.setItem('seeded', '1');
+    }
+  }, ['deftrack-fav-masternodes', JSON.stringify([proTx(121)])]);
+  await page.goto('/masternodes');
+  await expect(rows(page)).toHaveCount(50);
+
+  const starButton = (i: number) => rowFor(page, i).getByRole('button', { name: `Star ${ip(i)}:9999` });
+  await expect(rowFor(page, 1).locator('.mn-col-service a')).toHaveAttribute('href', `/masternode/${proTx(1)}`);
+  // Node 7 has no proTxHash: no star and no page link.
+  await expect(rowFor(page, 7).getByRole('button', { name: /^Star / })).toHaveCount(0);
+  await expect(rowFor(page, 7).locator('.mn-col-service a')).toHaveCount(0);
+  if (testInfo.project.name.includes('mobile')) {
+    // In the card view the star ends the first line inside the card, even beside the widest badge.
+    const [card, starBox, serviceBox] = await Promise.all([
+      rowFor(page, 10).boundingBox(),
+      starButton(10).boundingBox(),
+      rowFor(page, 10).locator('.mn-col-service').boundingBox(),
+    ]);
+    expect(starBox!.x + starBox!.width).toBeLessThanOrEqual(card!.x + card!.width);
+    expect(starBox!.y).toBeLessThan(serviceBox!.y + serviceBox!.height);
+  }
+
+  await starButton(1).click();
+  await starButton(3).click();
+  await expect(starButton(1)).toHaveAttribute('aria-pressed', 'true');
+  const mine = page.getByRole('button', { name: /My nodes/ });
+  await expect(mine).toContainText('3');
+  await mine.click();
+  await expect(page).toHaveURL(/[?&]mine=1(&|$)/);
+  await expect(rows(page)).toHaveCount(2);
+  await expect(page.locator('.mn-starred-elsewhere a')).toHaveAttribute('href', `/masternode/${proTx(121)}`);
+
+  await page.reload();
+  await expect(mine).toHaveAttribute('aria-pressed', 'true');
+  await expect(rows(page)).toHaveCount(2);
+  await expect(starButton(3)).toHaveAttribute('aria-pressed', 'true');
+  expect(await fitsWindow(page)).toBe(true);
+
+  await rowFor(page, 1).locator('.mn-col-service a').click();
+  await expect(page).toHaveURL(new RegExp(`/masternode/${proTx(1)}$`));
+});
+
+test('a starred node hidden by the country filter is not called inactive; a banned one still is @smoke', async ({ page }) => {
+  // Node 2 is in the United States and active; the Germany filter hides it. Node 121 is banned.
+  await stubApi(page, {
+    ...api(),
+    '/api/masternodes/distribution': { success: true, data: { total: 120, countries: [
+      { countryCode: 'DE', countryName: 'Germany', count: 61 }, { countryCode: 'US', countryName: 'United States', count: 60 },
+    ], providers: [] } },
+  });
+  await page.addInitScript(([key, value]) => window.localStorage.setItem(key, value), ['deftrack-fav-masternodes', JSON.stringify([proTx(2), proTx(121)])]);
+  await page.goto('/masternodes?mine=1');
+  await expect(rows(page)).toHaveCount(1);
+  const elsewhere = page.locator('.mn-starred-elsewhere a');
+  await expect(elsewhere).toHaveCount(1);
+  await expect(elsewhere).toHaveAttribute('href', `/masternode/${proTx(121)}`);
+  await page.getByRole('list', { name: 'Masternodes by country' }).getByRole('button', { name: /Germany/ }).click();
+  await expect(page.getByText('No starred masternode matches the chosen country or provider')).toBeVisible();
+  await expect(page.getByText('None of your starred masternodes is active')).toHaveCount(0);
+  // Still only the banned node is listed as not active: node 2 is merely filtered out.
+  await expect(elsewhere).toHaveCount(1);
+  await expect(elsewhere).toHaveAttribute('href', `/masternode/${proTx(121)}`);
+});
+
+test('My nodes with only a banned star says none of them is active and links to it @smoke', async ({ page }) => {
+  await stubApi(page, api());
+  await page.addInitScript(([key, value]) => window.localStorage.setItem(key, value), ['deftrack-fav-masternodes', JSON.stringify([proTx(121)])]);
+  await page.goto('/masternodes?mine=1');
+  await expect(page.getByText('None of your starred masternodes is active')).toBeVisible();
+  await expect(page.locator('.mn-starred-elsewhere a')).toHaveAttribute('href', `/masternode/${proTx(121)}`);
+  await expect(rows(page)).toHaveCount(0);
+});
+
+test('with storage blocked the table says the stars are not kept @smoke', async ({ page }) => {
+  await page.addInitScript(() => {
+    Object.defineProperty(window, 'localStorage', { get() { throw new Error('storage blocked'); } });
+  });
+  await stubApi(page, api());
+  await page.goto('/masternodes');
+  await rowFor(page, 1).getByRole('button', { name: `Star ${ip(1)}:9999` }).click();
+  await expect(page.getByText('This browser does not allow saving here, so your stars are kept only until the page is reloaded or closed.')).toBeVisible();
+});
+
+test('My nodes without any star explains how to add one @smoke', async ({ page }) => {
+  await stubApi(page, api());
+  await page.goto('/masternodes?mine=1');
+  await expect(page.getByText('No starred masternodes yet')).toBeVisible();
+  await page.getByRole('button', { name: 'Show all masternodes' }).click();
+  await expect(page).not.toHaveURL(/mine=/);
+  await expect(rows(page)).toHaveCount(50);
+});

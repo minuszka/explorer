@@ -1,0 +1,208 @@
+/* One masternode: identity, addresses and placement cards, then its PoSe history. */
+
+.mnd-header-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  margin-top: 0.5rem;
+}
+
+.mnd-header-link {
+  font-size: 0.85rem;
+}
+
+.mnd-note {
+  margin: 0.6rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+/* Two cards side by side where both fit with room for an address, otherwise one under the other. */
+.mnd-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 440px), 1fr));
+  gap: 1rem;
+  margin-bottom: 1rem;
+}
+
+.mnd-card {
+  min-width: 0;
+}
+
+.mnd-card .card-header {
+  margin-bottom: 0.5rem;
+}
+
+.mnd-card-subtitle {
+  margin: 0.25rem 0 0;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.mnd-list {
+  margin: 0;
+}
+
+.mnd-row {
+  display: grid;
+  grid-template-columns: 8.5rem minmax(0, 1fr);
+  gap: 0.75rem;
+  align-items: baseline;
+  padding: 0.6rem 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.mnd-row:last-child {
+  border-bottom: 0;
+}
+
+.mnd-row dt {
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.mnd-row dd {
+  min-width: 0;
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+/* An identifier in full, wrapped where needed, with its copy button beside it. */
+.mnd-id {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 100%;
+}
+
+.mnd-id .mono {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-all;
+}
+
+.mnd-code {
+  margin-left: 0.45rem;
+  font-size: 0.76rem;
+}
+
+/* A pasted value that is not a proTxHash can be long and unbroken: let it wrap. */
+.mnd-state .state-panel-description {
+  overflow-wrap: anywhere;
+}
+
+.mnd-state-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.75rem;
+  margin-top: 0.75rem;
+}
+
+.mnd-state-star {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.mnd-events-wrap {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.mnd-events {
+  width: 100%;
+}
+
+.mnd-events thead th {
+  background: var(--surface-muted);
+}
+
+.mnd-events thead th:first-child {
+  border-top-left-radius: 12px;
+}
+
+.mnd-events thead th:last-child {
+  border-top-right-radius: 12px;
+}
+
+.mnd-events tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.mnd-events td {
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 768px) {
+  /* Touch targets of at least 40 px on phones. */
+  .mnd-page .copy-button {
+    width: 40px;
+    height: 40px;
+  }
+
+  .mnd-header-link {
+    display: inline-flex;
+    align-items: center;
+    min-height: 40px;
+  }
+
+  /* Each event is a small card with labelled values. */
+  .mnd-events-wrap {
+    border: 0;
+    background: transparent;
+  }
+
+  .mnd-events,
+  .mnd-events tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+  }
+
+  .mnd-events thead {
+    display: none;
+  }
+
+  .mnd-events tbody tr {
+    display: flex;
+    flex-direction: column;
+    gap: 0.25rem;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  .mnd-events td {
+    display: block;
+    padding: 0;
+    border: 0;
+    font-size: 0.85rem;
+  }
+
+  .mnd-events td[data-label]::before {
+    content: attr(data-label) ' ';
+    margin-right: 0.35rem;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+}
+
+@media (max-width: 520px) {
+  .mnd-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.2rem;
+  }
+}

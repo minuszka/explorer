@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
+import { HiStar } from 'react-icons/hi2';
+import FavoriteButton from '../../components/ui/FavoriteButton';
 import FilterChips from '../../components/ui/FilterChips';
 import Pager from '../../components/ui/Pager';
 import SearchField from '../../components/ui/SearchField';
 import SortHeader from '../../components/ui/SortHeader';
 import StatePanel from '../../components/ui/StatePanel';
 import { formatNumber, truncateHash } from '../../utils/formatters';
-import { addressPath } from '../../utils/routes';
+import { addressPath, masternodePath } from '../../utils/routes';
+import { useFavoriteMasternodes } from '../../utils/favoriteMasternodes';
 import {
   PAGE_SIZE,
   filterRows,
+  isStarred,
   pageCount,
   readTableState,
   sortRows,
@@ -20,6 +24,7 @@ import {
   type TableState,
   UNKNOWN_VERSION,
 } from './masternodeRows';
+import './masternodeBadges.css';
 import './MasternodeTable.css';
 
 interface MasternodeTableProps {
@@ -32,6 +37,11 @@ interface MasternodeTableProps {
   versionsUnavailable: boolean;
   /** A country or provider filter chosen on the page (a ranking row), shown with a way to clear it. */
   pageFilter?: ReactNode;
+  /**
+   * Lower-case proTxHashes of every active node, before the page's country or provider filter.
+   * Tells a starred node hidden by that filter from one that is not active at all.
+   */
+  activeRegistrations?: ReadonlySet<string>;
 }
 
 const COLUMNS: Array<{ key: SortKey; label: string }> = [
@@ -82,7 +92,7 @@ function VersionCell({ row, pending }: { row: MasternodeRow; pending: boolean })
 /**
  * Active masternodes with search, status filter, sortable columns and 50-row pages. The search,
  * filter, sort and page live in the URL (`?q=&status=&sort=&page=`), so a view can be shared and
- * survives a reload.
+ * survives a reload. A star marks a node as the visitor's own; "My nodes" (`?mine=1`) shows only those.
  */
 export default function MasternodeTable({
   rows,
@@ -91,9 +101,12 @@ export default function MasternodeTable({
   versionsLoading,
   versionsUnavailable,
   pageFilter,
+  activeRegistrations,
 }: MasternodeTableProps) {
   const [params, setParams] = useSearchParams();
   const state = readTableState(params);
+  const { favorites, persistent } = useFavoriteMasternodes();
+  const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
   const cardRef = useRef<HTMLDivElement>(null);
   const headerHeight = useSiteHeaderHeight();
 
@@ -141,11 +154,22 @@ export default function MasternodeTable({
     window.scrollTo({ top: card.getBoundingClientRect().top + window.scrollY - siteHeader });
   }, [showingRows]);
 
+  // "My nodes" narrows the table to the starred registrations before any search or filter.
+  const starredRows = useMemo(() => rows.filter((row) => isStarred(row, favoriteSet)), [rows, favoriteSet]);
+  const scope = state.mine ? starredRows : rows;
   // While waiting for the versions nothing is matched yet, so the status counts claim nothing either.
   const searched = useMemo(
-    () => (waitingForVersions ? [] : filterRows(rows, state.q, 'all', state.version)),
-    [rows, state.q, state.version, waitingForVersions],
+    () => (waitingForVersions ? [] : filterRows(scope, state.q, 'all', state.version)),
+    [scope, state.q, state.version, waitingForVersions],
   );
+  // Starred registrations that are not in the active list at all (banned, removed or registered
+  // again); a node hidden only by the page's country or provider filter is still active.
+  const activeKeys = useMemo(
+    () => activeRegistrations ?? new Set(rows.flatMap((row) => (row.proTxHash ? [row.proTxHash.toLowerCase()] : []))),
+    [activeRegistrations, rows],
+  );
+  const starredElsewhere = useMemo(() => favorites.filter((id) => !activeKeys.has(id)), [favorites, activeKeys]);
+  const starredHiddenByPageFilter = starredRows.length === 0 && favorites.some((id) => activeKeys.has(id));
   const matched = useMemo(() => filterRows(searched, '', state.status), [searched, state.status]);
   const sorted = useMemo(() => sortRows(matched, state.sort, state.dir), [matched, state.sort, state.dir]);
   const pages = pageCount(sorted.length);
@@ -183,6 +207,37 @@ export default function MasternodeTable({
         description={pageFilter ? 'No active masternode matches the chosen country or provider.' : 'The current snapshot lists no active masternode.'}
       />
     );
+  } else if (state.mine && favorites.length === 0) {
+    body = (
+      <StatePanel
+        title="No starred masternodes yet"
+        description="Use the star in a row or on a masternode's page to add it to My nodes."
+        action={
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => update({ mine: false, page: 1 })}>
+            Show all masternodes
+          </button>
+        }
+      />
+    );
+  } else if (state.mine && starredHiddenByPageFilter) {
+    body = (
+      <StatePanel
+        title="No starred masternode matches the chosen country or provider"
+        description="Clear that filter to see your starred masternodes."
+      />
+    );
+  } else if (state.mine && starredRows.length === 0) {
+    body = (
+      <StatePanel
+        title="None of your starred masternodes is active"
+        description="They are listed above; open one to see its current status."
+        action={
+          <button type="button" className="btn btn-sm btn-secondary" onClick={() => update({ mine: false, page: 1 })}>
+            Show all masternodes
+          </button>
+        }
+      />
+    );
   } else if (matched.length === 0) {
     body = (
       <StatePanel
@@ -194,7 +249,7 @@ export default function MasternodeTable({
             className="btn btn-sm btn-secondary"
             onClick={() => {
               window.clearTimeout(pendingSearch.current);
-              update({ q: '', status: 'all', version: '', page: 1 });
+              update({ q: '', status: 'all', version: '', mine: false, page: 1 });
             }}
           >
             Clear search and filter
@@ -209,6 +264,9 @@ export default function MasternodeTable({
           <table className="mn-table">
             <thead>
               <tr>
+                <th className="mn-col-star" scope="col">
+                  <span className="sr-only">Star</span>
+                </th>
                 {COLUMNS.map((column) => (
                   <SortHeader
                     key={column.key}
@@ -225,8 +283,15 @@ export default function MasternodeTable({
             <tbody>
               {visible.map((row) => (
                 <tr key={row.id}>
+                  <td className="mn-col-star">
+                    {row.proTxHash && <FavoriteButton proTxHash={row.proTxHash} label={row.service} />}
+                  </td>
                   <td className="mn-col-service">
-                    <span className="mono">{row.service}</span>
+                    {row.proTxHash ? (
+                      <Link to={masternodePath(row.proTxHash)} className="mono">{row.service}</Link>
+                    ) : (
+                      <span className="mono">{row.service}</span>
+                    )}
                   </td>
                   <td className="mn-col-status">
                     <span className={`badge ${row.status === 'POSE_PENALTY' ? 'warning' : 'success'}`}>
@@ -298,8 +363,33 @@ export default function MasternodeTable({
           value={draft}
           onChange={onSearch}
         />
-        <FilterChips label="Status" options={statusOptions} value={state.status} onChange={(status) => update({ status, page: 1 })} />
+        <div className="mn-filter-row">
+          <FilterChips label="Status" options={statusOptions} value={state.status} onChange={(status) => update({ status, page: 1 })} />
+          <button
+            type="button"
+            className="filter-chip mn-mine-toggle"
+            aria-pressed={state.mine}
+            onClick={() => update({ mine: !state.mine, page: 1 })}
+          >
+            <HiStar aria-hidden="true" /> My nodes
+            <span className="filter-chip-count">{formatNumber(favorites.length)}</span>
+          </button>
+        </div>
       </div>
+      {state.mine && showingRows && starredElsewhere.length > 0 && (
+        <p className="mn-table-note mn-starred-elsewhere">
+          Starred but not in the active list:{' '}
+          {starredElsewhere.map((id, index) => (
+            <span key={id}>
+              {index > 0 && ', '}
+              <Link to={masternodePath(id)} className="mono" title={id}>{truncateHash(id, 6)}</Link>
+            </span>
+          ))}
+        </p>
+      )}
+      {!persistent && favorites.length > 0 && (
+        <p className="mn-table-note">This browser does not allow saving here, so your stars are kept only until the page is reloaded or closed.</p>
+      )}
       {versionsUnavailable && !loading && !error && (
         <p className="mn-table-note">Versions are unavailable right now, so every version shows as unknown.</p>
       )}

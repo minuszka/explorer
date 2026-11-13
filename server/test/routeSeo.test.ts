@@ -21,6 +21,8 @@ describe('shared route SEO metadata', () => {
     expect(resolveRouteSeo('/block/108705').title).toContain('Block Details');
     expect(resolveRouteSeo('/tx/example').title).toContain('Transaction Details');
     expect(resolveRouteSeo('/address/example').title).toContain('Address Details');
+    expect(resolveRouteSeo(`/masternode/${'a'.repeat(64)}`).title).toContain('Masternode Details');
+    expect(resolveRouteSeo('/masternodes').title).not.toContain('Masternode Details');
   });
 
   it('uses the redirect target as the canonical URL', () => {

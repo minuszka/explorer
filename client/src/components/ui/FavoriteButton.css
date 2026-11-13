@@ -1,0 +1,71 @@
+.favorite-button-wrap {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  vertical-align: middle;
+}
+
+.favorite-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-muted);
+  color: var(--text-muted);
+  font: inherit;
+  cursor: pointer;
+  transition: border-color 0.18s ease, color 0.18s ease;
+}
+
+.favorite-button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Starred is the visitor's own choice, not a node state, so it uses the accent colour. */
+.favorite-button.starred {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.favorite-button svg {
+  width: 17px;
+  height: 17px;
+}
+
+/* A small note above the button, like the copy button's, so nothing beside it reflows. */
+.favorite-button-status {
+  position: absolute;
+  left: 0;
+  bottom: calc(100% + 6px);
+  z-index: 2;
+  padding: 0.15rem 0.45rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 0.72rem;
+  font-weight: 600;
+  line-height: 1.4;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.favorite-button-status:empty {
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+@media (max-width: 768px) {
+  .favorite-button {
+    width: 40px;
+    height: 40px;
+  }
+}

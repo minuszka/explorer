@@ -20,6 +20,8 @@ import type {
   MasternodeHealthTimelinePointContract,
   MasternodeListItemContract,
   MasternodeNodeContract,
+  MasternodeDetailContract,
+  MasternodeNodeEventContract,
   MasternodeNodesContract,
   MasternodeOffenderContract,
   MasternodePayloadContract,
@@ -438,6 +440,10 @@ export interface PreReleaseNodeView {
 export type MasternodeCountryView = MasternodeCountryContract;
 export type MasternodeProviderView = MasternodeProviderContract;
 export type MasternodeView = MasternodeNodeContract;
+/** One node from `/v1/masternodes/:id`, with its PoSe and key fields. */
+export type MasternodeDetailView = MasternodeDetailContract;
+/** One stored event from `/v1/masternodes/:id/events`. */
+export type MasternodeNodeEventView = MasternodeNodeEventContract;
 export type MasternodeAnalyticsView = MasternodeAnalyticsContract;
 export type MasternodesView = MasternodePayloadContract;
 export type MasternodeListItemView = MasternodeListItemContract;

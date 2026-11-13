@@ -1,6 +1,12 @@
 import axios from 'axios';
 import type { OperatorDiagnosisData } from '@defcon/shared/dist/contracts';
-import { banAttributionApiResponseSchema, poseObservedEventsApiResponseSchema, dnsSeederNodesApiResponseSchema } from '@defcon/shared';
+import {
+  banAttributionApiResponseSchema,
+  poseObservedEventsApiResponseSchema,
+  dnsSeederNodesApiResponseSchema,
+  masternodeDetailApiResponseSchema,
+  masternodeNodeEventsApiResponseSchema,
+} from '@defcon/shared';
 import type { BanAttributionQuery, BanAttributionProof } from '@defcon/shared/dist/contracts';
 import type {
   ActiveMasternodeVersionsView,
@@ -73,6 +79,43 @@ export async function fetchPoseChainSummary(params: { hours: number; since?: str
   const { data } = await api.get<ApiEnvelope<PoseChainData>>('/v1/masternodes/pose-chain', { params: { ...params, limit: 1 } });
   if (!data.success || !data.data) throw new Error('Ban attribution unavailable');
   return data.data;
+}
+
+/** The request reached the API and it answered that the item does not exist. */
+export function isNotFoundError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 404;
+}
+
+/**
+ * One masternode registration by proTxHash, or null when the snapshot does not list it (404).
+ * The answer must name the same registration.
+ */
+export async function fetchMasternodeDetail(proTxHash: string) {
+  const wanted = proTxHash.toLowerCase();
+  try {
+    const { data } = await api.get(`/v1/masternodes/${encodeURIComponent(wanted)}`);
+    const parsed = masternodeDetailApiResponseSchema.safeParse(data);
+    if (!parsed.success) throw new Error('The masternode answer could not be read');
+    const node = parsed.data.data;
+    if ((node.proTxHash ?? '').toLowerCase() !== wanted) throw new Error('Masternode identity mismatch');
+    return node;
+  } catch (error) {
+    if (isNotFoundError(error)) return null;
+    throw error;
+  }
+}
+
+/**
+ * The stored events of one node id (its collateral outpoint), newest first. Every event must
+ * belong to that node id; which of them belong to one registration is decided by the caller.
+ */
+export async function fetchMasternodeNodeEvents(nodeId: string, limit = 50) {
+  const { data } = await api.get(`/v1/masternodes/${encodeURIComponent(nodeId)}/events`, { params: { limit } });
+  const parsed = masternodeNodeEventsApiResponseSchema.safeParse(data);
+  if (!parsed.success) throw new Error('The masternode events could not be read');
+  const events = parsed.data.data;
+  if (events.some((event) => event.nodeId !== nodeId)) throw new Error('Masternode event identity mismatch');
+  return events;
 }
 
 export async function fetchActiveMasternodeVersions() {

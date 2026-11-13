@@ -172,6 +172,15 @@ const prefixRoutes: Array<{ prefix: string; seo: RouteSeo }> = [
     },
   },
   {
+    prefix: '/masternode/',
+    seo: {
+      title: 'Masternode Details | DefTrack DeFCoN Explorer',
+      description: 'Inspect one DeFCoN masternode: status, payout and owner addresses, hosting, version and PoSe history.',
+      keywords: 'DeFCoN masternode, DFCN masternode details, proTxHash, PoSe history',
+      robots: DEFAULT_ROBOTS,
+    },
+  },
+  {
     prefix: '/address/',
     seo: {
       title: 'Address Details | DefTrack DeFCoN Explorer',

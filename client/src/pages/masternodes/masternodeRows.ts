@@ -16,6 +16,8 @@ export interface TableState {
   sort: SortKey;
   dir: SortDirection;
   page: number;
+  /** Only the visitor's starred masternodes ("My nodes"). */
+  mine: boolean;
 }
 
 export interface MasternodeRow {
@@ -38,7 +40,7 @@ export interface MasternodeRow {
 export const PAGE_SIZE = 50;
 const SORT_KEYS: SortKey[] = ['service', 'status', 'version', 'country', 'provider', 'payout'];
 const STATUS_FILTERS: StatusFilter[] = ['all', 'enabled', 'pose_penalty'];
-export const DEFAULT_STATE: TableState = { q: '', status: 'all', version: '', sort: 'service', dir: 'asc', page: 1 };
+export const DEFAULT_STATE: TableState = { q: '', status: 'all', version: '', sort: 'service', dir: 'asc', page: 1, mine: false };
 export const UNKNOWN_VERSION = 'unknown';
 
 /**
@@ -109,6 +111,7 @@ export function readTableState(params: URLSearchParams): TableState {
     sort: SORT_KEYS.includes(sort) ? sort : DEFAULT_STATE.sort,
     dir: SORT_KEYS.includes(sort) ? dir : DEFAULT_STATE.dir,
     page: Number.isSafeInteger(page) && page >= 1 ? page : DEFAULT_STATE.page,
+    mine: params.get('mine') === '1',
   };
 }
 
@@ -121,6 +124,7 @@ export function writeTableState(params: URLSearchParams, state: TableState): URL
   set('version', state.version, DEFAULT_STATE.version);
   set('sort', `${state.dir === 'desc' ? '-' : ''}${state.sort}`, DEFAULT_STATE.sort);
   set('page', String(state.page), String(DEFAULT_STATE.page));
+  set('mine', state.mine ? '1' : '', '');
   return next;
 }
 
@@ -139,6 +143,11 @@ export function filterRows(rows: MasternodeRow[], q: string, status: StatusFilte
     return [row.service, row.proTxHash, row.payoutAddress, row.provider, row.countryName, row.countryCode]
       .some((field) => field != null && field.toLowerCase().includes(needle));
   });
+}
+
+/** Whether the row's registration is starred; a row without a proTxHash cannot be starred. */
+export function isStarred(row: Pick<MasternodeRow, 'proTxHash'>, favorites: ReadonlySet<string>): boolean {
+  return row.proTxHash != null && favorites.has(row.proTxHash.toLowerCase());
 }
 
 function compareNumbers(a: number[], b: number[]): number {

@@ -1,0 +1,27 @@
+/* Small labels shared by the masternode table and the masternode page. */
+
+.mn-source-tag {
+  display: inline-flex;
+  margin-left: 0.45rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.mn-source-tag.tagged {
+  border-color: color-mix(in oklab, var(--success) 42%, transparent);
+  color: var(--success);
+}
+
+.mn-version-stale {
+  margin-left: 0.4rem;
+  color: var(--warning, var(--text-muted));
+  font-size: 0.72rem;
+  font-weight: 600;
+}

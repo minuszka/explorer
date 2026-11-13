@@ -18,6 +18,7 @@ const BubblemapsPage = lazy(() => import('./pages/BubblemapsPage'));
 const NetworkPage = lazy(() => import('./pages/NetworkPage'));
 const NetworkHealthPage = lazy(() => import('./pages/NetworkHealthPage'));
 const MasternodesPage = lazy(() => import('./pages/MasternodesPage'));
+const MasternodeDetailPage = lazy(() => import('./pages/MasternodeDetailPage'));
 const ProviderTagsPage = lazy(() => import('./pages/ProviderTagsPage'));
 const MasternodeHealthPage = lazy(() => import('./pages/MasternodeHealthPage'));
 const BanDetectionPage = lazy(() => import('./pages/BanDetectionPage'));
@@ -87,6 +88,7 @@ export default function App() {
         <Route path="chain-health" element={withSuspense(<NetworkHealthPage />)} />
         <Route path="crawler" element={<Navigate to="/chain-health" replace />} />
         <Route path="masternodes" element={withSuspense(<MasternodesPage />)} />
+        <Route path="masternode/:proTxHash" element={withSuspense(<MasternodeDetailPage />)} />
         <Route path="provider-tags" element={withSuspense(<ProviderTagsPage />)} />
         <Route path="devtools/provider-tags" element={<Navigate to="/provider-tags" replace />} />
         <Route path="devtools/pose-penalty" element={withSuspense(<PosePenaltyWatchPage />)} />

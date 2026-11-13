@@ -102,6 +102,13 @@ export default function MasternodesPage() {
     [nodes],
   );
 
+  // Every active registration, before the country or provider filter: the table uses it to tell a
+  // starred node hidden by that filter from one that is no longer active.
+  const activeRegistrations = useMemo(
+    () => new Set(activeNodes.flatMap((node) => (node.proTxHash ? [node.proTxHash.toLowerCase()] : []))),
+    [activeNodes],
+  );
+
   const visibleNodes = useMemo(() => {
     if (!activeFilter) return activeNodes;
     if (activeFilter.type === 'country') {
@@ -271,6 +278,7 @@ export default function MasternodesPage() {
         error={nodesError}
         versionsLoading={versionsQuery.isPending}
         versionsUnavailable={versionsQuery.isError && !versionsQuery.data}
+        activeRegistrations={activeRegistrations}
         pageFilter={
           activeFilter && (
             <>

@@ -3,6 +3,7 @@ export * from './constants';
 export { banAttributionApiResponseSchema } from './contracts/banAttribution';
 export { poseObservedEventsApiResponseSchema } from './contracts/poseTelemetry';
 export { dnsSeederNodesApiResponseSchema } from './contracts/dnsSeeder';
+export { masternodeDetailApiResponseSchema, masternodeNodeEventsApiResponseSchema } from './contracts/masternodes';
 export type { DnsSeederNodeContract, DnsSeederNodesApiResponse } from './contracts/dnsSeeder';
 export type {
   ActiveMasternodeVersionsContract,
@@ -13,6 +14,8 @@ export type {
   MasternodeAnalyticsContract,
   MasternodeApiResponse,
   MasternodeCountryContract,
+  MasternodeDetailContract,
+  MasternodeNodeEventContract,
   MasternodeDistributionApiResponse,
   MasternodeDistributionContract,
   MasternodeListItemContract,
