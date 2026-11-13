@@ -24,6 +24,7 @@ import { useChartAnimation } from '../utils/chartAnimation';
 import { formatNumber, formatDifficulty, formatSmallPrice, formatUtcDateTime } from '../utils/formatters';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { useMarketSnapshot } from '../hooks/useMarketSnapshot';
+import { computeMasternodeEconomics } from '../utils/masternodeEconomics';
 import './PageStyles.css';
 import './MiningPage.css';
 
@@ -100,47 +101,10 @@ export default function MiningPage() {
     collateral, onlineMn, totalMn, poseBannedMn,
     hasOnlineMn, avgBlockTime,
     roi, paybackDays, avgRewardFreqSec, coinsLockedOnline, coinsLockedOnlinePct,
-  } = useMemo(() => {
-    const rawBlockReward = stats?.blockReward ?? 0;
-    const configuredBaseReward = coin?.INITIAL_REWARD ?? 0;
-    const reportedStakingReward = stats?.stakingReward ?? 0;
-    const effectiveStakingReward =
-      reportedStakingReward > 0
-        ? reportedStakingReward
-        : configuredBaseReward > 0 && rawBlockReward > configuredBaseReward
-          ? rawBlockReward - configuredBaseReward
-          : 0;
-    const blockRewardBase =
-      rawBlockReward > 0 ? Math.max(rawBlockReward - effectiveStakingReward, 0) : configuredBaseReward;
-    const collateral = coin?.MASTERNODE_COLLATERAL ?? 0;
-    const totalMn = masternodesData?.total ?? 0;
-    const onlineMn = masternodesData?.enabled ?? stats?.masternodes ?? 0;
-    const poseBannedMn = masternodesData?.poseBanned ?? 0;
-    const avgBlockTime = Math.max(1, stats?.avgBlockTime || coin?.BLOCK_TIME_SECONDS || 150);
-    const blocksPerDay = 86400 / avgBlockTime;
-    const mnRewardPerBlock = blockRewardBase;
-    const totalBlockReward = rawBlockReward > 0 ? rawBlockReward : blockRewardBase + effectiveStakingReward;
-
-    const dailyMnPool = mnRewardPerBlock * blocksPerDay;
-    const hasOnlineMn = onlineMn > 0;
-    const dailyIncome = hasOnlineMn ? dailyMnPool / onlineMn : 0;
-    const yearlyIncome = dailyIncome * 365;
-
-    const roi = collateral > 0 && yearlyIncome > 0 ? (yearlyIncome / collateral) * 100 : 0;
-    const paybackDays = dailyIncome > 0 && collateral > 0 ? Math.round(collateral / dailyIncome) : 0;
-    const avgRewardFreqSec = onlineMn > 0 ? onlineMn * avgBlockTime : 0;
-
-    const coinsLockedOnline = onlineMn * collateral;
-    const supply = stats?.supply?.circulating ?? 0;
-    const coinsLockedOnlinePct = supply > 0 && coinsLockedOnline > 0 ? (coinsLockedOnline / supply) * 100 : 0;
-
-    return {
-      totalBlockReward, effectiveStakingReward, mnRewardPerBlock, supply,
-      collateral, onlineMn, totalMn, poseBannedMn,
-      hasOnlineMn, avgBlockTime,
-      roi, paybackDays, avgRewardFreqSec, coinsLockedOnline, coinsLockedOnlinePct,
-    };
-  }, [stats, coin, masternodesData]);
+  } = useMemo(
+    () => computeMasternodeEconomics({ stats, coin, summary: masternodesData }),
+    [stats, coin, masternodesData]
+  );
 
   const priceUsd = market?.available ? market?.price?.usd ?? null : null;
   const masternodeValueUsd =

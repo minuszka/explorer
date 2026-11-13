@@ -27,33 +27,58 @@
   background: linear-gradient(90deg, var(--accent), transparent 48%);
 }
 
-.dashboard-market-summary {
+.dashboard-metrics {
   display: grid;
   grid-column: 1 / -1;
-  justify-self: start;
-  align-content: center;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+  gap: var(--space-3);
+  margin: 0;
+}
+
+.dashboard-metric {
+  display: grid;
+  align-content: start;
   gap: 0.2rem;
+  min-width: 0;
+  border: 1px solid var(--border-soft);
+  border-radius: 10px;
+  background: var(--surface-muted);
+  padding: 10px 12px;
   color: var(--text);
 }
 
-.dashboard-market-label {
+.dashboard-metric dd {
+  margin: 0;
+}
+
+.dashboard-metric-label {
   color: var(--text-subtle);
-  font-size: 0.805rem;
+  font-size: 0.72rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.05em;
   text-transform: uppercase;
+}
+
+/* One size at every width: the long price ($0.000008052) has to fit the narrowest tile of each
+   layout (6 columns just above 1080 px, 3 columns just above 520 px, 2 columns on a 360 px phone). */
+.dashboard-metric-value {
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+
+.dashboard-metric-note {
+  color: var(--text-subtle);
+  font-size: 0.75rem;
 }
 
 .dashboard-market-main {
   display: flex;
+  flex-wrap: wrap;
   align-items: baseline;
-  gap: var(--space-2);
-}
-
-.dashboard-market-value {
-  color: var(--text);
-  font-size: 1.2075rem;
-  font-variant-numeric: tabular-nums;
+  gap: 0 var(--space-2);
 }
 
 .dashboard-market-change {
@@ -131,7 +156,7 @@
 
 .flow-kpis {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 10px;
 }
 
@@ -511,9 +536,9 @@
   background: var(--success-soft);
 }
 
-@media (max-width: 1180px) {
-  .flow-kpis {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
+@media (max-width: 1080px) {
+  .dashboard-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
 
@@ -563,4 +588,12 @@
     padding: var(--space-5);
   }
 
+  .dashboard-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  /* Two tiles side by side on a 360 px phone. */
+  .dashboard-metric {
+    padding: 8px 10px;
+  }
 }

@@ -9,7 +9,7 @@ import {
   HiOutlineChevronUp,
   HiOutlineCube,
 } from 'react-icons/hi2';
-import { fetchBlockTxs, fetchDashboardOverview } from '../services/api';
+import { fetchBlockTxs, fetchCoin, fetchDashboardOverview, fetchMasternodeSummary } from '../services/api';
 import {
   formatAge,
   formatBytes,
@@ -19,9 +19,11 @@ import {
   truncateHash,
 } from '../utils/formatters';
 import { useMarketSnapshot } from '../hooks/useMarketSnapshot';
+import { usePageVisibility } from '../hooks/usePageVisibility';
 import type { DashboardBlockView, DashboardTxView, TxListItemView } from '../types/api';
 import './DashboardPage.css';
 import { txPath } from '../utils/routes';
+import { computeMasternodeEconomics } from '../utils/masternodeEconomics';
 const TX_PREVIEW_MAX = 12;
 const REWARD_TOLERANCE = 0.0000001;
 const PROTOCOL_TX_TOLERANCE = 0.0000001;
@@ -78,6 +80,40 @@ function formatMarketAge(ageSeconds: number | null | undefined): string | null {
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ${minutes % 60}m`;
   return `${Math.floor(hours / 24)}d ${hours % 24}h`;
+}
+
+const COMPACT_NUMBER = new Intl.NumberFormat('en-US', { notation: 'compact', maximumFractionDigits: 1 });
+
+function formatCompactCoin(value: number): string {
+  return COMPACT_NUMBER.format(value);
+}
+
+function formatBlockTime(seconds: number): string {
+  const rounded = Math.round(seconds);
+  if (rounded < 60) return `${rounded}s`;
+  return `${Math.floor(rounded / 60)}m ${rounded % 60}s`;
+}
+
+/** Same precision as the Rewards page: the ROI with two decimals, the locked share with one. */
+function formatPercent(value: number, digits: number): string {
+  return `${value.toFixed(digits)}%`;
+}
+
+interface HeroMetricProps {
+  label: string;
+  value: string;
+  note?: string;
+  title?: string;
+}
+
+function HeroMetric({ label, value, note, title }: HeroMetricProps) {
+  return (
+    <div className="dashboard-metric">
+      <dt className="dashboard-metric-label">{label}</dt>
+      <dd className="dashboard-metric-value" title={title}>{value}</dd>
+      {note && <dd className="dashboard-metric-note">{note}</dd>}
+    </div>
+  );
 }
 
 interface LatestBlockRowProps {
@@ -239,6 +275,16 @@ export default function DashboardPage() {
     queryKey: ['dashboard-overview'],
     queryFn: fetchDashboardOverview,
   });
+  // The same inputs as the Rewards page, under the same query keys and refresh, so both pages show one ROI.
+  // The overview refreshes with new blocks; the masternode list does not, so it polls like on the Rewards page.
+  const isPageVisible = usePageVisibility();
+  const coinQuery = useQuery({ queryKey: ['coin'], queryFn: fetchCoin });
+  const masternodeSummaryQuery = useQuery({
+    queryKey: ['masternodes', 'summary', 'rewards-fallback'],
+    queryFn: fetchMasternodeSummary,
+    staleTime: 45_000,
+    refetchInterval: isPageVisible ? 90_000 : false,
+  });
   const { data: market, isLoading: marketLoading } = useMarketSnapshot({
     staleTime: 45_000,
     refetchInterval: 60_000,
@@ -272,35 +318,70 @@ export default function DashboardPage() {
   const stakeRewardPerBlock =
     typeof stats?.stakingReward === 'number' && stats.stakingReward > 0 ? stats.stakingReward : null;
 
-  const formatCompactCoin = (value: number) =>
-    new Intl.NumberFormat('en-US', {
-      notation: 'compact',
-      maximumFractionDigits: 1,
-    }).format(value);
+  const masternodeSummary = masternodeSummaryQuery.isError ? undefined : masternodeSummaryQuery.data;
+  const economics = useMemo(
+    () => computeMasternodeEconomics({ stats, coin: coinQuery.data, summary: masternodeSummary }),
+    [stats, coinQuery.data, masternodeSummary]
+  );
+  // A figure is "..." while its inputs load and "N/A" when they did not arrive or cannot give one.
+  const statsValue = (render: () => string | null) => {
+    if (overviewLoading) return '...';
+    if (!stats) return 'N/A';
+    return render() ?? 'N/A';
+  };
+  const circulating = typeof stats?.supply?.circulating === 'number' && stats.supply.circulating > 0
+    ? stats.supply.circulating
+    : null;
+  // Wait for the masternode list too, so the figure does not first show the fallback count and then jump.
+  const economicsLoading = coinQuery.isLoading || masternodeSummaryQuery.isLoading;
+  const roiValue = economicsLoading
+    ? '...'
+    : statsValue(() => (coinQuery.data && economics.roi > 0 ? formatPercent(economics.roi, 2) : null));
+  const lockedValue = economicsLoading
+    ? '...'
+    : statsValue(() => (coinQuery.data && economics.coinsLockedOnlinePct > 0 ? formatPercent(economics.coinsLockedOnlinePct, 1) : null));
 
   return (
     <div className="dashboard fade-in">
       <section className="dashboard-hero" aria-label="Dashboard overview">
-        <div className="dashboard-market-summary" aria-label="DFCN market snapshot">
-          <span className="dashboard-market-label">DFCN / USD</span>
-          <span className="dashboard-market-main">
-            <strong className="dashboard-market-value">
-              {marketLoading ? '...' : priceUsd != null ? `$${formatSmallPrice(priceUsd, 4)}` : 'N/A'}
-            </strong>
-            {priceChange24h != null && !marketLoading && (
-              <span className={`dashboard-market-change ${priceChange24h >= 0 ? 'positive' : 'negative'}`}>
-                {priceChange24h >= 0 ? '+' : ''}
-                {priceChange24h.toFixed(2)}%
-              </span>
+        <dl className="dashboard-metrics">
+          <div className="dashboard-metric" aria-label="DFCN market snapshot">
+            <dt className="dashboard-metric-label">DFCN / USD</dt>
+            <dd className="dashboard-market-main">
+              <strong className="dashboard-metric-value">
+                {marketLoading ? '...' : priceUsd != null ? `$${formatSmallPrice(priceUsd, 4)}` : 'N/A'}
+              </strong>
+              {priceChange24h != null && !marketLoading && (
+                <span className={`dashboard-market-change ${priceChange24h >= 0 ? 'positive' : 'negative'}`}>
+                  {priceChange24h >= 0 ? '+' : ''}
+                  {priceChange24h.toFixed(2)}%
+                </span>
+              )}
+            </dd>
+            {market?.freshness === 'stale' && (
+              <dd className="dashboard-market-freshness">
+                <span role="status">Market data delayed{marketAge ? ` · ${marketAge} ago` : ''}</span>
+              </dd>
             )}
-          </span>
-          {market?.freshness === 'stale' && (
-            <span className="dashboard-market-freshness" role="status">
-              Market data delayed{marketAge ? ` · ${marketAge} ago` : ''}
-            </span>
-          )}
-        </div>
-
+          </div>
+          <HeroMetric
+            label="Circulating supply"
+            value={statsValue(() => (circulating != null ? `${formatCompactCoin(circulating)} DFCN` : null))}
+            title={circulating != null ? `${formatNumber(circulating)} DFCN` : undefined}
+          />
+          <HeroMetric label="Masternode ROI" value={roiValue} note="per year at the current reward" />
+          <HeroMetric
+            label="Avg block time"
+            value={statsValue(() => (typeof stats?.avgBlockTime === 'number' && stats.avgBlockTime > 0 ? formatBlockTime(stats.avgBlockTime) : null))}
+            note="7-day average"
+            title={typeof stats?.avgBlockTime === 'number' && stats.avgBlockTime > 0 ? `${stats.avgBlockTime} seconds` : undefined}
+          />
+          <HeroMetric label="Collateral locked" value={lockedValue} note="of the circulating supply" />
+          <HeroMetric
+            label="Transactions (24h)"
+            value={statsValue(() => (txCount24h != null ? formatNumber(txCount24h) : null))}
+          />
+        </dl>
       </section>
 
       <section className="grid-2 dashboard-latest">
@@ -408,10 +489,6 @@ export default function DashboardPage() {
           <div className="flow-kpi">
             <span>Blocks (24h)</span>
             <strong>{overviewLoading ? '...' : formatNumber(flow24hBlocks)}</strong>
-          </div>
-          <div className="flow-kpi">
-            <span>Transactions (24h)</span>
-            <strong>{overviewLoading ? '...' : txCount24h != null ? formatNumber(txCount24h) : 'n/a'}</strong>
           </div>
           <div className="flow-kpi">
             <span>Avg tx/block (24h)</span>
