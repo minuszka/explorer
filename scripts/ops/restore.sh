@@ -8,8 +8,10 @@ BACKUP_DIR="${BACKUP_DIR:-${APP_DIR}/backups/mongodb}"
 SELECTED_BACKUP=""
 DRY_RUN=0
 CONFIRMED=0
+ALLOW_UNVERIFIED=0
 SERVICE_STOPPED=0
 MONGO_CONFIG=""
+RESTORE_LOG=""
 
 usage() {
   cat <<'EOF'
@@ -21,6 +23,7 @@ Options:
   --backup PATH      Backup directory below the configured backup root
   --dry-run          Validate only; do not stop services or modify MongoDB
   --yes              Required confirmation for a real restore
+  --allow-unverified Accept a backup from before checksums
   --app-dir PATH     Application checkout (default: this checkout)
   --backup-dir PATH  Backup root (default: APP_DIR/backups/mongodb)
   --service NAME     systemd service (default: deftrack.service)
@@ -34,6 +37,7 @@ while [[ $# -gt 0 ]]; do
     --backup) SELECTED_BACKUP="$2"; shift 2 ;;
     --dry-run) DRY_RUN=1; shift ;;
     --yes) CONFIRMED=1; shift ;;
+    --allow-unverified) ALLOW_UNVERIFIED=1; shift ;;
     --app-dir) APP_DIR="$2"; ENV_FILE="$APP_DIR/.env"; BACKUP_DIR="$APP_DIR/backups/mongodb"; shift 2 ;;
     --backup-dir) BACKUP_DIR="$2"; shift 2 ;;
     --service) SERVICE_NAME="$2"; shift 2 ;;
@@ -58,11 +62,16 @@ if [[ "$SELECTED_BACKUP" != /* ]]; then
 fi
 SELECTED_BACKUP="$(assert_path_within "$SELECTED_BACKUP" "$BACKUP_DIR")"
 
-[[ -d "$SELECTED_BACKUP" ]] || die "Backup directory not found: $SELECTED_BACKUP"
-[[ -f "$SELECTED_BACKUP/.complete" ]] || die "Backup is incomplete or was not produced by the supported backup workflow"
-collection_count="$(find "$SELECTED_BACKUP" -type f -name '*.bson.gz' | wc -l | tr -d ' ')"
-[[ "$collection_count" -gt 0 ]] || die "Backup contains no BSON collections"
-resolve_mongo_uri >/dev/null
+collection_count="$(assert_restorable_backup "$SELECTED_BACKUP" "$ALLOW_UNVERIFIED")"
+mongo_uri="$(resolve_mongo_uri)"
+# A URI that names a database makes mongorestore read the path as that database's folder.
+# Given the backup itself, it would skip everything and still exit 0.
+restore_source="$SELECTED_BACKUP"
+database="$(mongo_uri_database "$mongo_uri")"
+if [[ -n "$database" ]]; then
+  restore_source="$SELECTED_BACKUP/$database"
+  [[ -d "$restore_source" ]] || die "Backup holds no folder for the database in MONGODB_URI: $database"
+fi
 
 log "Validated backup: $(basename "$SELECTED_BACKUP") ($collection_count collections)"
 if [[ "$DRY_RUN" -eq 1 ]]; then
@@ -74,6 +83,7 @@ fi
 
 cleanup() {
   [[ -z "$MONGO_CONFIG" ]] || rm -f -- "$MONGO_CONFIG"
+  [[ -z "$RESTORE_LOG" ]] || rm -f -- "$RESTORE_LOG"
   if [[ "$SERVICE_STOPPED" -eq 1 ]]; then
     run_privileged systemctl start "$SERVICE_NAME" || true
   fi
@@ -84,23 +94,32 @@ log "Creating a safety backup before restore"
 # Pass APP_DIR and ENV_FILE through the environment: backup.sh --app-dir would
 # reset ENV_FILE to $APP_DIR/.env and ignore a custom ENV_FILE. --no-prune keeps
 # the retention pass from deleting existing backups, including the selected one.
-APP_DIR="$APP_DIR" ENV_FILE="$ENV_FILE" \
-  bash "$SCRIPT_DIR/backup.sh" --backup-dir "$BACKUP_DIR" --no-prune >/dev/null
+safety_backup="$(APP_DIR="$APP_DIR" ENV_FILE="$ENV_FILE" \
+  bash "$SCRIPT_DIR/backup.sh" --backup-dir "$BACKUP_DIR" --no-prune | tail -n 1)"
+log "Safety backup: $safety_backup"
+# Only now: the safety backup takes the lock itself. A scheduled backup may have run in between.
+lock_backup_root
+assert_restorable_backup "$SELECTED_BACKUP" "$ALLOW_UNVERIFIED" >/dev/null
 
-mongo_uri="$(resolve_mongo_uri)"
+RESTORE_LOG="$(mktemp)"
 MONGO_CONFIG="$(create_mongo_tool_config "$mongo_uri")"
 log "Stopping $SERVICE_NAME"
 run_privileged systemctl stop "$SERVICE_NAME"
 SERVICE_STOPPED=1
 
 log "Restoring MongoDB with --drop"
-mongorestore --config="$MONGO_CONFIG" --gzip --drop "$SELECTED_BACKUP"
+if ! mongorestore --config="$MONGO_CONFIG" --gzip --drop "$restore_source" 2>&1 | tee "$RESTORE_LOG"; then
+  die "mongorestore failed; the database may be partly restored. Safety backup: $safety_backup"
+fi
+check_restore_log "$RESTORE_LOG" "$restore_source" \
+  || die "The restore did not complete; the database may be partly restored. Safety backup: $safety_backup"
 
 log "Starting $SERVICE_NAME"
 run_privileged systemctl start "$SERVICE_NAME"
 SERVICE_STOPPED=0
-rm -f -- "$MONGO_CONFIG"
+rm -f -- "$MONGO_CONFIG" "$RESTORE_LOG"
 MONGO_CONFIG=""
+RESTORE_LOG=""
 
 if ! wait_for_health 30 2; then
   run_privileged systemctl status "$SERVICE_NAME" --no-pager || true

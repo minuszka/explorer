@@ -9,6 +9,8 @@ APP_OWNER="${APP_OWNER:-}"
 SERVICE_NAME="${SERVICE_NAME:-deftrack.service}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:3001/api/health/ready}"
 ENV_FILE="${ENV_FILE:-${APP_DIR}/.env}"
+BACKUP_LABEL="defcon_explorer"
+BACKUP_CHECKSUMS="backup.sha256"
 
 log() {
   printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*"
@@ -101,6 +103,96 @@ run_privileged() {
   else
     require_command sudo
     sudo -- "$@"
+  fi
+}
+
+# Prints the database a MongoDB URI names, nothing if it names none. Credentials stay out of it.
+mongo_uri_database() {
+  local rest="${1#*://}"
+
+  rest="${rest%%\?*}"
+  [[ "$rest" == */* ]] && printf '%s' "${rest##*/}"
+  return 0
+}
+
+# One at a time per backup root: a retention pass must not remove what a restore or a restore check is
+# reading, a check must see the newest backup, and a backup must not read a database being restored.
+# The kernel drops this lock when the process ends, however it ends.
+lock_backup_root() {
+  require_command flock
+  exec 8<"$BACKUP_DIR"
+  flock -w "${BACKUP_LOCK_WAIT_SECONDS:-3600}" 8 || die "Another backup, restore or restore check is still running in $BACKUP_DIR"
+}
+
+# Lists a backup's files with their checksums, all but the two that mark it finished.
+list_backup_files() {
+  find . -type f ! -name "$BACKUP_CHECKSUMS" ! -name .complete -print0 | LC_ALL=C sort -z
+}
+
+write_backup_checksums() {
+  (cd -- "$1" && list_backup_files | xargs -0 sha256sum) > "$1/$BACKUP_CHECKSUMS"
+}
+
+# Prints the number of collections in a backup, or stops if it cannot be restored. A file lost or
+# changed after the backup finished would otherwise go unnoticed: what remains can restore fine,
+# without its indexes for example. A backup from before checksums passes only if the caller allows it.
+assert_restorable_backup() {
+  local backup="$1"
+  local allow_unverified="${2:-0}"
+  local count
+  local listed
+  local present
+
+  [[ -d "$backup" ]] || die "Backup directory not found: $backup"
+  [[ -f "$backup/.complete" ]] || die "Backup is incomplete or was not produced by the supported backup workflow"
+  count="$(find "$backup" -type f -name '*.bson.gz' | wc -l | tr -d ' ')"
+  [[ "$count" -gt 0 ]] || die "Backup contains no BSON collections"
+  if [[ -f "$backup/$BACKUP_CHECKSUMS" ]]; then
+    (cd -- "$backup" && sha256sum --check --quiet --strict "$BACKUP_CHECKSUMS") >&2 \
+      || die "Files in the backup were lost or changed: $backup"
+    listed="$(wc -l < "$backup/$BACKUP_CHECKSUMS" | tr -d ' ')"
+    present="$(cd -- "$backup" && list_backup_files | tr -cd '\0' | wc -c | tr -d ' ')"
+    [[ "$listed" -eq "$present" ]] || die "The backup holds files its checksums do not list: $backup"
+  elif [[ "$allow_unverified" -eq 1 ]]; then
+    warn "Backup has no checksums, so lost or changed files cannot be noticed: $backup"
+  else
+    die "Backup has no checksums: $backup. Make a new backup, or accept the risk with --allow-unverified"
+  fi
+  printf '%s' "$count"
+}
+
+# mongorestore exits 0 even when it skipped every file, so a restore counts only if its
+# own log shows that every collection finished, documents were restored and none failed.
+# mongorestore handles system collections itself and does not report them.
+check_restore_log() {
+  local log_file="$1"
+  local source_dir="$2"
+  local summary
+  local restored
+  local failed
+  local finished
+  local expected
+
+  summary="$(sed -n -E 's/^(.*[^0-9])?([0-9]+) document\(s\) restored successfully\. ([0-9]+) document\(s\) failed to restore\..*/\2 \3/p' "$log_file" | tail -n 1)"
+  if [[ -z "$summary" ]]; then
+    warn "mongorestore did not report how many documents it restored"
+    return 1
+  fi
+  restored="${summary% *}"
+  failed="${summary#* }"
+  finished="$(grep -c 'finished restoring' "$log_file" || true)"
+  expected="$(find "$source_dir" -type f -name '*.bson.gz' ! -name 'system.*' | wc -l | tr -d ' ')"
+  if [[ "$failed" -ne 0 ]]; then
+    warn "mongorestore failed to restore $failed documents"
+    return 1
+  fi
+  if [[ "$restored" -eq 0 ]]; then
+    warn "mongorestore restored no documents"
+    return 1
+  fi
+  if [[ "$finished" -ne "$expected" ]]; then
+    warn "mongorestore finished $finished collections of $expected"
+    return 1
   fi
 }
 

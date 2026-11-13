@@ -1,7 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { stubApi } from './apiStub';
 
-const TEST_BLOCK_HASH = 'a'.repeat(64);
 const timelinePoint = {
   bucket: '2026-09-05T12:00:00.000Z',
   timestamp: 1_788_609_600_000,
@@ -86,32 +85,11 @@ const banWaveFixture = {
   },
 };
 
-test('SearchV2 submits a query and renders the matching block route @smoke', async ({ page }) => {
-  await stubApi(page, {
-    '/api/search': {
-      success: true,
-      data: {
-        type: 'block',
-        matchedBy: 'height',
-        result: { height: 123_456, hash: TEST_BLOCK_HASH },
-      },
-    },
-  });
-
-  await page.goto('/searchv2');
-  await page.getByPlaceholder('Search by tx hash or address').fill('123456');
-  await page.getByRole('button', { name: 'Analyze Flow' }).click();
-
-  await expect(page).toHaveURL(/\/searchv2\?q=123456$/);
-  await expect(page.getByRole('heading', { name: 'Block match found' })).toBeVisible();
-  await expect(page.getByText('123,456')).toBeVisible();
-});
-
 test('PoSe timeline controls update a rendered chart state @smoke', async ({ page }) => {
   await stubApi(page, { '/api/v1/masternodes/ban-waves': banWaveFixture });
 
   await page.goto('/ban-detection');
-  await expect(page.getByRole('heading', { name: 'Ban Detection' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'PoSe Watch' })).toBeVisible();
   await expect(page.locator('.recharts-responsive-container').first()).toBeVisible();
 
   const timeWindow = page.getByRole('tablist', { name: 'Time window' });

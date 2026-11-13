@@ -6,7 +6,6 @@ source "$SCRIPT_DIR/lib.sh"
 
 BACKUP_DIR="${BACKUP_DIR:-${APP_DIR}/backups/mongodb}"
 KEEP_DAYS="${BACKUP_KEEP_DAYS:-14}"
-BACKUP_LABEL="defcon_explorer"
 DRY_RUN=0
 PRUNE=1
 
@@ -46,6 +45,8 @@ APP_DIR="$(canonical_path "$APP_DIR")"
 ENV_FILE="${ENV_FILE:-$APP_DIR/.env}"
 BACKUP_DIR="$(canonical_path "$BACKUP_DIR")"
 mongo_uri="$(resolve_mongo_uri)"
+# A dump holds the whole database: the owner and the group of the backup root, nobody else.
+umask 027
 timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"
 backup_path="${BACKUP_DIR}/${BACKUP_LABEL}_${timestamp}"
 mongo_config=""
@@ -62,7 +63,14 @@ if [[ "$DRY_RUN" -eq 1 ]]; then
 fi
 
 mkdir -p "$BACKUP_DIR"
+lock_backup_root
+# Named after the wait for the lock: the name must not date the backup before its data.
+timestamp="$(date -u '+%Y%m%dT%H%M%SZ')"
+backup_path="${BACKUP_DIR}/${BACKUP_LABEL}_${timestamp}"
 assert_path_within "$backup_path" "$BACKUP_DIR" >/dev/null
+# The name has one-second resolution, and mongodump would write into an existing folder. A
+# safety backup could overwrite the very backup that is about to be restored.
+mkdir -- "$backup_path" 2>/dev/null || die "Backup already exists, try again in a second: $backup_path"
 
 cleanup() {
   [[ -z "$mongo_config" ]] || rm -f -- "$mongo_config"
@@ -95,6 +103,7 @@ commit="$(git -C "$APP_DIR" rev-parse --short HEAD 2>/dev/null || printf 'unknow
   printf 'git_commit=%s\n' "$commit"
   printf 'collections=%s\n' "$collection_count"
 } > "$backup_path/backup.meta"
+write_backup_checksums "$backup_path"
 touch "$backup_path/.complete"
 rm -f -- "$mongo_config"
 mongo_config=""

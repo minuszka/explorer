@@ -24,7 +24,7 @@
       "owner": "DeFTrack maintainers",
       "purpose": "Deploy a verified production branch to the systemd-managed DeFTrack service, or roll it back to an earlier commit.",
       "invocation": "npm run ops:deploy -- --dry-run; npm run ops:deploy; npm run ops:deploy -- --expect-commit <full hash>; npm run ops:deploy -- --rollback-to <commit>",
-      "safety": "Runs one deploy or rollback at a time, requires a clean checkout on the expected branch, can require an exact remote commit, uses fast-forward-only Git updates, runs checks and build before restart, builds the client beside the live one so a failed build leaves it untouched, limits rollbacks to earlier commits, and verifies readiness."
+      "safety": "Runs one deploy or rollback at a time, requires a clean checkout on the expected branch, can require an exact remote commit, uses fast-forward-only Git updates, runs checks and build before restart, builds the client beside the live one so a failed build leaves it untouched, writes no file its group could change, limits rollbacks to earlier commits, and verifies readiness."
     },
     {
       "path": "scripts/ops/backup.sh",
@@ -32,7 +32,7 @@
       "owner": "DeFTrack maintainers",
       "purpose": "Create compressed, complete-marker-protected MongoDB backups with bounded retention.",
       "invocation": "npm run ops:backup -- --dry-run; npm run ops:backup",
-      "safety": "Uses a mode-0600 temporary MongoDB config, removes incomplete dumps, and restricts retention deletion to the backup root."
+      "safety": "Uses a mode-0600 temporary MongoDB config, removes incomplete dumps, never writes into an existing backup, records a checksum of every file, runs one at a time with restores and restore checks, keeps dumps from other accounts, and restricts retention deletion to the backup root."
     },
     {
       "path": "scripts/ops/restore.sh",
@@ -40,7 +40,23 @@
       "owner": "DeFTrack maintainers",
       "purpose": "Restore a verified MongoDB dump after creating a safety backup.",
       "invocation": "npm run ops:restore -- --backup defcon_explorer_TIMESTAMP --dry-run; add --yes for a real restore.",
-      "safety": "Requires an in-root completed backup and explicit --yes, creates a pre-restore backup, controls systemd state, and verifies readiness."
+      "safety": "Requires an in-root completed backup whose checksums match and explicit --yes, creates a pre-restore backup, controls systemd state, fails unless mongorestore reports every collection restored, and verifies readiness."
+    },
+    {
+      "path": "scripts/ops/restore-check.sh",
+      "status": "supported",
+      "owner": "DeFTrack maintainers",
+      "purpose": "Prove a backup can be restored by loading it into a throwaway MongoDB and comparing document counts.",
+      "invocation": "npm run ops:restore-check -- --dry-run; npm run ops:restore-check",
+      "safety": "Never reads MONGODB_URI or touches the service: it starts its own MongoDB in a private temporary folder beside the backups, listening only on a socket in that folder and on no TCP port, and removes both when it ends."
+    },
+    {
+      "path": "scripts/ops/backup-pull.sh",
+      "status": "supported",
+      "owner": "DeFTrack maintainers",
+      "purpose": "Copy finished MongoDB backups to a second host and check each copy against its checksums.",
+      "invocation": "On the second host, with lib.sh beside it: backup-pull.sh --from account@host: --to PATH --ssh-key FILE",
+      "safety": "Only reads from the source, accepts only exact backup names, moves a copy into place after its checksums pass, keeps copies private, fetches a bounded number per run, removes old copies by count so they stay when the source stops, and fails when the newest copy is too old."
     },
     {
       "path": "scripts/perf/api-benchmark.mjs",

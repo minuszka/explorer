@@ -4,6 +4,10 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=./lib.sh
 source "$SCRIPT_DIR/lib.sh"
 
+# The backup units refuse to run scripts that the group could change, so a deploy must not leave
+# any, whatever the umask of the login.
+umask 022
+
 BRANCH="${DEPLOY_BRANCH:-main}"
 CLIENT_KEEP_RELEASES="${CLIENT_KEEP_RELEASES:-3}"
 DRY_RUN=0

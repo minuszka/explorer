@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { HiOutlineChartPie } from 'react-icons/hi2';
 import { fetchPoseChainSummary } from '../services/api';
 import { getBanTypeShare } from '../utils/banTypeShare';
+import TimeText from './ui/TimeText';
 
 export function BanTypeShareKpi({ hours, since, fromHeight, enabled, paused }: {
   hours: number; since?: string; fromHeight?: number; enabled: boolean; paused: boolean;
@@ -35,7 +36,7 @@ export function BanTypeShareKpi({ hours, since, fromHeight, enabled, paused }: {
         {' · '}height {data.coverage.startHeight}–{data.coverage.confirmedThroughHeight}
       </div>}
       <div className="mnh-stat-sub">Share of attributed bans only; unknown penalties are excluded. Membership alone is not ban evidence.</div>
-      {data && <div className="mnh-stat-sub">Updated {new Date(data.generatedAt).toLocaleString()}</div>}
+      {data && <div className="mnh-stat-sub">Updated <TimeText value={data.generatedAt} /></div>}
       <button type="button" className="bd-icon-btn" disabled={!enabled || query.isFetching}
         onClick={() => void query.refetch()}>Refresh attribution</button>
     </div>

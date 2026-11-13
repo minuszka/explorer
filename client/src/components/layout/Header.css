@@ -9,9 +9,14 @@
 .header-shell {
   display: flex;
   flex-direction: column;
-  gap: 12px;
-  padding-top: 14px;
-  padding-bottom: 14px;
+  gap: 6px;
+}
+
+/* The shared .container rule sets `padding: 0 …` and is loaded later, so a plain .header-shell
+   padding never applied and the top bar touched the header's edges. */
+.header-shell.container {
+  padding-top: 7px;
+  padding-bottom: 7px;
 }
 
 .header-top {
@@ -23,21 +28,33 @@
 
 .header-brand {
   display: inline-flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
   min-width: 0;
 }
 
+.header-brand-logo {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+}
+
 .header-brand-title {
-  font-size: clamp(1.1rem, 1.8vw, 1.5rem);
+  font-size: clamp(1.1rem, 1.8vw, 1.35rem);
   font-weight: 700;
   letter-spacing: -0.02em;
   color: var(--text);
 }
 
-.header-brand-subtitle {
-  font-size: 0.84rem;
-  color: var(--text-subtle);
+.header-search {
+  flex: 1 1 280px;
+  max-width: 440px;
+}
+
+.header-search .search-input {
+  min-height: 36px;
+  padding-top: 0.4rem;
+  padding-bottom: 0.4rem;
 }
 
 .header-top-actions {
@@ -111,34 +128,31 @@
   color: var(--warning);
 }
 
-.theme-toggle,
-.mobile-toggle {
+.header-icon-button {
   display: inline-flex;
+  flex-shrink: 0;
   align-items: center;
   justify-content: center;
-  width: 38px;
-  height: 38px;
+  width: 40px;
+  height: 40px;
   border: 1px solid var(--border);
   border-radius: 10px;
   background: var(--surface);
   color: var(--text-muted);
+  font-size: 1.25rem;
   cursor: pointer;
   transition: border-color 0.15s ease, color 0.15s ease, background-color 0.15s ease;
 }
 
-.theme-toggle:hover,
-.mobile-toggle:hover {
+.header-icon-button:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
 
-.theme-toggle {
-  font-size: 1.1rem;
-}
-
+/* On wide screens the search field and the menu row are always visible. */
+.search-toggle,
 .mobile-toggle {
   display: none;
-  font-size: 1.25rem;
 }
 
 .header-nav-shell {
@@ -177,8 +191,8 @@
   align-items: center;
   justify-content: center;
   gap: 7px;
-  min-height: 42px;
-  padding: 0.45rem 0.48rem;
+  min-height: 36px;
+  padding: 0.36rem 0.48rem;
   border-radius: var(--radius-md);
   border: 1px solid transparent;
   color: var(--text-muted);
@@ -290,7 +304,8 @@
   background: var(--bg-soft);
 }
 
-.mobile-drawer-inner {
+/* Same reason as .header-shell.container: a plain class loses to the later .container padding. */
+.mobile-drawer-inner.container {
   padding-top: 12px;
   padding-bottom: 14px;
 }
@@ -395,8 +410,29 @@
     display: none;
   }
 
+  .search-toggle,
   .mobile-toggle {
     display: inline-flex;
+  }
+
+  /* The search opens as a full-width row under the top bar. */
+  .header-top {
+    flex-wrap: wrap;
+  }
+
+  .header-search {
+    display: none;
+    order: 3;
+    flex: 1 0 100%;
+    max-width: none;
+  }
+
+  .header-search.open {
+    display: block;
+  }
+
+  .header-search .search-input {
+    min-height: 40px;
   }
 
   .mobile-drawer.open {
@@ -417,10 +453,6 @@
 
   .header-brand-title {
     font-size: 1.08rem;
-  }
-
-  .header-brand-subtitle {
-    display: none;
   }
 
   .header-top-actions {
@@ -444,10 +476,30 @@
   .header-status-chips:not(.compact) .status-chip-value {
     font-size: 0.76rem;
   }
+
+  /* The value keeps its "Current indexed block height" tooltip. */
+  .header-status-chips:not(.compact) .status-chip-height .status-chip-label {
+    display: none;
+  }
 }
 
-@media (max-width: 420px) {
-  .header-status-chips:not(.compact) .status-chip-height .status-chip-label {
+/* A phone has room for the logo, the status, search and the menu, not for the title too.
+   The title stays the link's accessible name. */
+@media (max-width: 520px) {
+  .header-brand-title {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+  }
+}
+
+/* Below 360px a longer status word ("Disconnected", "Sync error") leaves no room for the block
+   height beside the logo, the search and the menu buttons. The block height stays in the menu. */
+@media (max-width: 359px) {
+  .header-status-chips:not(.compact) .status-chip-live.degraded ~ .status-chip-height {
     display: none;
   }
 }

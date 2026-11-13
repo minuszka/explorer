@@ -10,25 +10,21 @@ import {
 } from 'react-icons/hi2';
 import { fetchBlock, fetchBlockTxs } from '../services/api';
 import { formatNumber, truncateHash, formatAge, formatDate, formatBytes, formatCoin } from '../utils/formatters';
+import { blockPath, txPath } from '../utils/routes';
 import './PageStyles.css';
 
 export default function BlockDetailPage() {
   const { hashOrHeight } = useParams();
-  const blockKey = hashOrHeight || '0';
-  const [txPageState, setTxPageState] = useState<{ key: string; page: number }>({
-    key: blockKey,
-    page: 1,
-  });
-  const page = txPageState.key === blockKey ? txPageState.page : 1;
-  const limit = 20;
+  // The previous/next links stay on this route. A new block gets a fresh view, so the previous
+  // block's details or transactions never show under the new block's address while it loads.
+  return <BlockDetailView key={hashOrHeight ?? ''} hashOrHeight={hashOrHeight} />;
+}
 
-  const setPage = (nextPage: number | ((currentPage: number) => number)) => {
-    setTxPageState((prev) => {
-      const currentPage = prev.key === blockKey ? prev.page : 1;
-      const resolvedPage = typeof nextPage === 'function' ? nextPage(currentPage) : nextPage;
-      return { key: blockKey, page: Math.max(1, resolvedPage) };
-    });
-  };
+function BlockDetailView({ hashOrHeight }: { hashOrHeight: string | undefined }) {
+  const blockKey = hashOrHeight || '0';
+  const [page, setPageState] = useState(1);
+  const limit = 20;
+  const setPage = (nextPage: number) => setPageState(Math.max(1, nextPage));
 
   const { data: block, isLoading: loading, error } = useQuery({
     queryKey: ['block', hashOrHeight],
@@ -67,7 +63,7 @@ export default function BlockDetailPage() {
     <div className="fade-in">
       <div className="block-nav">
         {block.height > 0 && (
-          <Link to={`/searchv2?q=${encodeURIComponent(String(block.height - 1))}`} className="btn btn-sm btn-secondary">
+          <Link to={blockPath(block.height - 1)} className="btn btn-sm btn-secondary">
             <HiOutlineChevronLeft /> Block #{formatNumber(block.height - 1)}
           </Link>
         )}
@@ -75,7 +71,7 @@ export default function BlockDetailPage() {
           <HiOutlineCube /> Block #{formatNumber(block.height)}
         </h1>
         {block.nextblockhash && (
-          <Link to={`/searchv2?q=${encodeURIComponent(String(block.height + 1))}`} className="btn btn-sm btn-secondary">
+          <Link to={blockPath(block.height + 1)} className="btn btn-sm btn-secondary">
             Block #{formatNumber(block.height + 1)} <HiOutlineChevronRight />
           </Link>
         )}
@@ -162,7 +158,7 @@ export default function BlockDetailPage() {
                   {txs.map((tx) => (
                     <tr key={tx.txid}>
                       <td>
-                        <Link to={`/searchv2?q=${encodeURIComponent(tx.txid)}`} className="hash mono">
+                        <Link to={txPath(tx.txid)} className="hash mono">
                           {truncateHash(tx.txid, 16)}
                         </Link>
                         {tx.isDonation && (

@@ -26,6 +26,7 @@ import {
 import { fetchMasternodeHealth } from '../services/api';
 import { useChartAnimation } from '../utils/chartAnimation';
 import { formatNumber, truncateHash } from '../utils/formatters';
+import TimeText from '../components/ui/TimeText';
 import type { MasternodeHealthView } from '../types/api';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import './PageStyles.css';
@@ -64,13 +65,15 @@ function timeAgo(iso: string): string {
   return `${diffD}d ago`;
 }
 
+// Chart buckets are UTC hours and days; label them in UTC whatever the browser's language.
+const HOUR_BUCKET_LABEL = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const DAY_BUCKET_LABEL = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' });
+
 function formatBucket(bucket: string, kind: 'hour' | 'day'): string {
   // bucket strings: hourly = 'YYYY-MM-DDTHH:00:00Z'; daily = 'YYYY-MM-DD'
   const d = new Date(kind === 'hour' ? bucket : `${bucket}T00:00:00Z`);
   if (Number.isNaN(d.getTime())) return bucket;
-  return kind === 'hour'
-    ? d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit' })
-    : d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+  return kind === 'hour' ? HOUR_BUCKET_LABEL.format(d) : DAY_BUCKET_LABEL.format(d);
 }
 
 export default function MasternodeHealthPage() {
@@ -434,7 +437,7 @@ export default function MasternodeHealthPage() {
                   <td>
                     {timeAgo(e.detectedAt)}
                     <div className="mnh-meta-line">
-                      {new Date(e.detectedAt).toLocaleString()}
+                      <TimeText value={e.detectedAt} />
                     </div>
                   </td>
                   <td className="mnh-mono">{truncateHash(e.nodeId, 6)}</td>

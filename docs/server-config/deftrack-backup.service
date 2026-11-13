@@ -1,0 +1,38 @@
+# Reference systemd unit for one MongoDB backup; deftrack-backup.timer starts it.
+# See "Scheduled Backups" in docs/operations.md for the setup.
+#
+# /opt/deftrack is a neutral example checkout path, and "admin" stands for the
+# account that owns the checkout and can read .env. The sandbox lets the script
+# write only to the backup folder, and blocks sudo.
+#
+# The script runs from the checkout as its owner, so no other account may be able
+# to change it: the ExecStartPre lines stop here if the checkout, the scripts or
+# .env belong to another account or can be written by the group or by everybody,
+# or if the scripts or .env are links, whose target this would not see. In the backups, which hold no code, only another owner or write access for
+# everybody counts: their group is the copy account's.
+#
+# The group of the backup root, which has the setgid bit, gives the copy account
+# its read access, and no other account can read a dump.
+
+[Unit]
+Description=DefTrack MongoDB backup
+After=mongod.service
+
+[Service]
+Type=oneshot
+User=admin
+UMask=0027
+ExecStartPre=/usr/bin/find /opt/deftrack/ -maxdepth 0 ( -perm /022 -o ! -user ${USER} ) -printf "Another account could change: %%p\n" -exec false {} +
+ExecStartPre=/usr/bin/find /opt/deftrack/scripts /opt/deftrack/.env ( -type l -o -perm /022 -o ! -user ${USER} ) -printf "Another account could change: %%p\n" -exec false {} +
+ExecStartPre=/usr/bin/find /opt/deftrack/backups ( ! -type l -perm /002 -o ! -user ${USER} ) -printf "Another account could change: %%p\n" -exec false {} +
+ExecStart=/usr/bin/bash /opt/deftrack/scripts/ops/backup.sh
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle
+
+# Sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/deftrack/backups

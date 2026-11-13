@@ -144,12 +144,6 @@ const exactRoutes: Record<string, RouteSeo> = {
     keywords: 'DeFCoN search, DFCN explorer search',
     robots: 'noindex, follow',
   },
-  '/searchv2': {
-    title: 'SearchV2 Flow Explorer | DefTrack DeFCoN Explorer',
-    description: 'Advanced tx/address search with clear DeFCoN value flow from inputs to outputs.',
-    keywords: 'DeFCoN search v2, DFCN tx flow, DFCN address flow explorer',
-    robots: 'noindex, follow',
-  },
   '/test': {
     title: 'Telemetry Test | DefTrack',
     description: 'Internal telemetry test page for upcoming Proof-of-Resources charts.',
@@ -192,6 +186,7 @@ const canonicalAliases: Record<string, string> = {
   '/wallets': '/richlist',
   '/crawler': '/chain-health',
   '/devtools/provider-tags': '/provider-tags',
+  '/searchv2': '/search',
 };
 
 function normalizePathname(pathname: string): string {

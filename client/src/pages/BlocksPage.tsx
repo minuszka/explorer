@@ -5,6 +5,7 @@ import { HiOutlineCube } from 'react-icons/hi2';
 import { fetchBlocksCursor, type BlocksCursor } from '../services/api';
 import { formatAge, formatNumber, truncateHash } from '../utils/formatters';
 import './PageStyles.css';
+import { addressPath, blockPath } from '../utils/routes';
 
 export default function BlocksPage() {
   const [cursorStack, setCursorStack] = useState<BlocksCursor[]>([]);
@@ -62,12 +63,12 @@ export default function BlocksPage() {
                   {blocks.map((block) => (
                     <tr key={block.height}>
                       <td>
-                        <Link to={`/searchv2?q=${encodeURIComponent(String(block.height))}`} className="hash">
+                        <Link to={blockPath(block.height)} className="hash">
                           {formatNumber(block.height)}
                         </Link>
                       </td>
                       <td>
-                        <Link to={`/searchv2?q=${encodeURIComponent(block.hash)}`} className="hash mono">
+                        <Link to={blockPath(block.hash)} className="hash mono">
                           {truncateHash(block.hash, 12)}
                         </Link>
                       </td>
@@ -77,7 +78,7 @@ export default function BlocksPage() {
                       <td className="mono">{formatNumber(block.totalValueOut || 0, 2)} DFCN</td>
                       <td className="mono">
                         {block.minedBy ? (
-                          <Link to={`/searchv2?q=${encodeURIComponent(block.minedBy)}`} className="hash mono">
+                          <Link to={addressPath(block.minedBy)} className="hash mono">
                             {truncateHash(block.minedBy, 12)}
                           </Link>
                         ) : (

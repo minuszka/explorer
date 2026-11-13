@@ -1,0 +1,29 @@
+# Reference systemd unit for the second host: one copy of the explorer's backups;
+# deftrack-backup-pull.timer starts it. See "Scheduled Backups" in docs/operations.md.
+#
+# Replace explorer.example with the explorer host. The unprivileged account owns
+# /var/lib/deftrack-backup, which holds its SSH key, known_hosts and the copies.
+# The data comes from another host, so the sandbox keeps it away from everything
+# else here, including the keys of other accounts in /root and /home.
+
+[Unit]
+Description=Copy DefTrack backups to this host
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=deftrack-backup
+Group=deftrack-backup
+UMask=0077
+ExecStart=/usr/bin/bash /usr/local/lib/deftrack-backup/backup-pull.sh --from deftrack-backup@explorer.example: --to /var/lib/deftrack-backup/mongodb --ssh-key /var/lib/deftrack-backup/.ssh/id_ed25519
+TimeoutStartSec=2h
+Nice=10
+IOSchedulingClass=idle
+
+# Sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/deftrack-backup

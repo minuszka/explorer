@@ -23,7 +23,8 @@
     "ops:preflight": "bash scripts/ops/preflight.sh",
     "ops:deploy": "bash scripts/ops/deploy.sh",
     "ops:backup": "bash scripts/ops/backup.sh",
-    "ops:restore": "bash scripts/ops/restore.sh"
+    "ops:restore": "bash scripts/ops/restore.sh",
+    "ops:restore-check": "bash scripts/ops/restore-check.sh"
   },
   "dependencies": {
     "concurrently": "^8.2.2",

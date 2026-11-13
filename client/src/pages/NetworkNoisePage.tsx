@@ -9,7 +9,7 @@ import {
 } from 'react-icons/hi2';
 import { fetchNetworkNoiseSummary } from '../services/api';
 import { usePageVisibility } from '../hooks/usePageVisibility';
-import { formatNumber, truncateHash } from '../utils/formatters';
+import { formatNumber, formatUtcDateTime, truncateHash } from '../utils/formatters';
 import type { NetworkNoiseLevel } from '../types/api';
 import './PageStyles.css';
 import './NetworkNoisePage.css';
@@ -196,7 +196,7 @@ export default function NetworkNoisePage() {
                   <div
                     className="nn-timeline-column"
                     key={entry.bucket}
-                    title={`${new Date(entry.bucket).toLocaleString()} · ${entry.total} signals · ${entry.nodes.size} nodes`}
+                    title={`${formatUtcDateTime(entry.bucket)} · ${entry.total} signals · ${entry.nodes.size} nodes`}
                   >
                     <div className="nn-timeline-bar" style={{ height: `${height}%` }}>
                       <span className="nn-timeline-chain" style={{ height: `${chainShare}%` }} />

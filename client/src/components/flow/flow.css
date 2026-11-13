@@ -97,6 +97,8 @@
 
 .searchv2-flow-header {
   display: grid;
+  /* Without a shrinkable column the unbroken txid sets the width and the row runs off a phone screen. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 0.48rem;
   margin-bottom: 0.8rem;
 }
@@ -106,6 +108,11 @@
   align-items: center;
   gap: 0.45rem;
   flex-wrap: wrap;
+}
+
+.searchv2-flow-hashline .hash {
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .searchv2-flow-hashline svg {
@@ -180,6 +187,11 @@
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.searchv2-flow-node-type {
+  color: var(--text-muted);
+  font-size: 0.7rem;
 }
 
 .searchv2-flow-node-tag {
@@ -294,18 +306,6 @@
   padding: 0.5rem 1rem;
 }
 
-.searchv2-block-match {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.9rem;
-}
-
-.searchv2-block-text {
-  margin-top: 0.35rem;
-  color: var(--text-secondary);
-}
-
 @media (max-width: 1100px) {
   .searchv2-summary-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -326,10 +326,6 @@
 
   .searchv2-address-stats {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .searchv2-address-stats .stat-card:first-child {
-    grid-column: 1 / -1;
   }
 }
 
@@ -371,10 +367,5 @@
 
   .searchv2-address-stats {
     grid-template-columns: 1fr;
-  }
-
-  .searchv2-block-match {
-    flex-direction: column;
-    align-items: flex-start;
   }
 }

@@ -1,0 +1,38 @@
+# Reference systemd unit for one restore check of the newest backup;
+# deftrack-restore-check.timer starts it. It does not touch the live database or
+# the service. See "Scheduled Backups" in docs/operations.md for the setup.
+#
+# /opt/deftrack is a neutral example checkout path, and "admin" stands for the
+# account that owns the checkout. The throwaway MongoDB works in a hidden folder
+# beside the backups, so the sandbox lets it write only there.
+#
+# The script runs from the checkout as its owner, so no other account may be able
+# to change it: the ExecStartPre lines stop here if the checkout or the scripts
+# belong to another account or can be written by the group or by everybody, or if
+# the scripts are links, whose target this would not see. In the backups, which hold no code, only another owner or write access for
+# everybody counts: their group is the copy account's.
+#
+# After= makes a check started together with a backup run after it, so that it
+# takes the newest one. Once they run, the scripts' own lock keeps them apart.
+
+[Unit]
+Description=DefTrack MongoDB restore check
+After=deftrack-backup.service
+
+[Service]
+Type=oneshot
+User=admin
+UMask=0027
+ExecStartPre=/usr/bin/find /opt/deftrack/ -maxdepth 0 ( -perm /022 -o ! -user ${USER} ) -printf "Another account could change: %%p\n" -exec false {} +
+ExecStartPre=/usr/bin/find /opt/deftrack/scripts ( -type l -o -perm /022 -o ! -user ${USER} ) -printf "Another account could change: %%p\n" -exec false {} +
+ExecStartPre=/usr/bin/find /opt/deftrack/backups ( ! -type l -perm /002 -o ! -user ${USER} ) -printf "Another account could change: %%p\n" -exec false {} +
+ExecStart=/usr/bin/bash /opt/deftrack/scripts/ops/restore-check.sh
+TimeoutStartSec=2h
+IOSchedulingClass=idle
+
+# Sandboxing
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/opt/deftrack/backups

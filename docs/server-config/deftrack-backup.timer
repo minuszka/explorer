@@ -1,0 +1,12 @@
+# Starts deftrack-backup.service every night. Persistent= runs a missed backup
+# as soon as the host is back. See "Scheduled Backups" in docs/operations.md.
+
+[Unit]
+Description=Daily DefTrack MongoDB backup
+
+[Timer]
+OnCalendar=*-*-* 02:15:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -14,7 +14,7 @@ Unknown `/api/*` paths return a JSON error instead of the web client.
 ### PoSe ban analysis
 
 `GET /api/v1/masternodes/ban-waves` accepts `scope=rolling` (default) or `scope=q60`.
-The Ban Detection page defaults to Q60 history. Q60 selects confirmed bans whose
+The PoSe Watch page defaults to Q60 history. Q60 selects confirmed bans whose
 `poseBanHeight` is at least mainnet activation height **144888**; a later discovery
 height does not move an older ban into this period. The activation timestamp is
 read from the daemon's block header. If that lookup fails, the endpoint returns an

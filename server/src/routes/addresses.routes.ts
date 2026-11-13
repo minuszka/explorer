@@ -14,11 +14,16 @@ import {
 
 const router = Router();
 
+// The address page shows each transaction's input total, fee and reward label from this list,
+// so the projection must keep the same stored totals that /api/tx/:txid returns.
 const ADDRESS_TX_LIST_PROJECTION = {
   txid: 1,
   blockheight: 1,
   blocktime: 1,
+  isCoinbase: 1,
+  totalValueInSat: 1,
   totalValueOutSat: 1,
+  feeSat: 1,
   'vin.address': 1,
   'vin.valueSat': 1,
   'vout.valueSat': 1,

@@ -3,6 +3,8 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { OperatorDiagnosis, OperatorDiagnosisData, OperatorDsl } from '@defcon/shared/dist/contracts';
 import { fetchOperatorDiagnosis } from '../services/api';
+import { formatUtcDate } from '../utils/formatters';
+import TimeText from './ui/TimeText';
 import './OperatorDiagnosisPanel.css';
 
 export const nodePermalink = (identity: string) => `/ban-detection?node=${encodeURIComponent(identity)}`;
@@ -21,7 +23,7 @@ function Diagnosis({ diagnosis: d }: { diagnosis: OperatorDiagnosis }) {
   return <details className="operator-diagnosis" title={`${d.message} ${d.hint}`}>
     <summary><span aria-hidden="true">⚠ </span>{d.code} · {d.level} · {d.evidence}</summary>
     <p>{d.message}</p><p>{d.hint}</p>
-    <small>{d.source} · {new Date(d.since).toLocaleString()}</small>
+    <small>{d.source} · <TimeText value={d.since} /></small>
   </details>;
 }
 function DslStatus({ dsl }: { dsl: OperatorDsl }) {
@@ -66,7 +68,7 @@ export function OperatorDiagnosisPanel({ filter, paused }: { filter: string; pau
     <p className="mnh-panel-sub">Conditional DKG risk, retained revival patterns, Sentinel service verdicts and last-known inventory observations. Open a diagnosis for its evidence, time and suggested checks.</p>
     <span role="status">{copyStatus}</span>
     {!fresh ? <p>Operator diagnosis unavailable or awaiting a fresh snapshot.</p> : <>
-      <p className="mnh-panel-sub">Observed {new Date(data.generatedAt).toLocaleString()} · {data.registeredCount} registered nodes · maximum penalty {data.maxPenalty}. Revival history is limited to retained events since {new Date(data.historySince).toLocaleDateString()}.</p>
+      <p className="mnh-panel-sub">Observed <TimeText value={data.generatedAt} /> · {data.registeredCount} registered nodes · maximum penalty {data.maxPenalty}. Revival history is limited to retained events since {formatUtcDate(data.historySince)}.</p>
       <DslStatus dsl={data.dsl} />
       {!nodes.length && <p>No recorded diagnoses match this search.</p>}
       <div className="mnh-table-wrap"><table className="mnh-table"><thead><tr><th>Node / Service</th><th>Diagnosis</th></tr></thead>

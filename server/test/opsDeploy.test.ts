@@ -239,6 +239,21 @@ describe.skipIf(!canRun)('production client publish and deploy', { timeout: 120_
     );
   }
 
+  // File modes mean little in Git Bash on Windows.
+  it.runIf(process.platform === 'linux')('leaves nothing its group could change, whatever the umask of the login', () => {
+    createCheckout();
+    const result = spawnSync(
+      bash,
+      ['-c', 'umask 002; exec bash "$@"', '_', posix(path.join(app, 'scripts', 'ops', 'deploy.sh')), '--app-dir', posix(app),
+        '--service', 'fixture.service', '--health-url', 'http://fixture.invalid/ready'],
+      { env, encoding: 'utf8' },
+    );
+
+    expect(result.status, result.stderr).toBe(0);
+    expect(readFileSync(path.join(app, 'release.txt'), 'utf8')).toBe('next\n');
+    expect(statSync(path.join(app, 'release.txt')).mode & 0o022).toBe(0);
+  });
+
   describe('publish_client_build', () => {
     let staging: string;
     const newBuild = (tag: string) => ({

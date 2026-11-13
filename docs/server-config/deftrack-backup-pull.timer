@@ -1,0 +1,12 @@
+# Starts deftrack-backup-pull.service every night, an hour after the backup on the
+# explorer host. See "Scheduled Backups" in docs/operations.md.
+
+[Unit]
+Description=Daily copy of DefTrack backups to this host
+
+[Timer]
+OnCalendar=*-*-* 03:15:00 UTC
+Persistent=true
+
+[Install]
+WantedBy=timers.target

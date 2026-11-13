@@ -49,14 +49,49 @@ export function formatAge(timestamp: number): string {
   const now = Math.floor(Date.now() / 1000);
   const diff = now - timestamp;
 
+  // A timestamp slightly ahead of this browser's clock is not a negative age.
+  if (diff < 1) return 'just now';
   if (diff < 60) return `${diff}s ago`;
   if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
   if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
   return `${Math.floor(diff / 86400)}d ago`;
 }
 
+export type DateInput = Date | number | string | null | undefined;
+
+/** Parses a Date, an ISO string or epoch milliseconds; null when the value is not a valid time. */
+export function parseDate(value: DateInput): Date | null {
+  if (value == null || value === '') return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isFinite(date.getTime()) ? date : null;
+}
+
+const pad2 = (value: number) => String(value).padStart(2, '0');
+
+/** "2026-11-11", in UTC. Invalid input gives "—". */
+export function formatUtcDate(value: DateInput): string {
+  const date = parseDate(value);
+  if (!date) return '—';
+  return `${date.getUTCFullYear()}-${pad2(date.getUTCMonth() + 1)}-${pad2(date.getUTCDate())}`;
+}
+
+/** "13:08:40 UTC". Invalid input gives "—". */
+export function formatUtcTime(value: DateInput): string {
+  const date = parseDate(value);
+  if (!date) return '—';
+  return `${pad2(date.getUTCHours())}:${pad2(date.getUTCMinutes())}:${pad2(date.getUTCSeconds())} UTC`;
+}
+
+/** "2026-11-11 13:08:40 UTC": the site shows chain times in UTC whatever the browser's language. */
+export function formatUtcDateTime(value: DateInput): string {
+  const date = parseDate(value);
+  if (!date) return '—';
+  return `${formatUtcDate(date)} ${formatUtcTime(date)}`;
+}
+
+/** Formats a chain timestamp given in seconds. */
 export function formatDate(timestamp: number): string {
-  return new Date(timestamp * 1000).toLocaleString();
+  return formatUtcDateTime(timestamp * 1000);
 }
 
 export function formatBytes(bytes: number): string {

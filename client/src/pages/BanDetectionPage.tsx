@@ -2,6 +2,7 @@ import { useMemo, useState } from 'react';
 import { Link, useSearchParams } from 'react-router-dom';
 import { OperatorDiagnosisPanel, nodePermalink } from '../components/OperatorDiagnosisPanel';
 import { BannedByPanel } from '../components/BannedByPanel';
+import TimeText from '../components/ui/TimeText';
 import {
   HiOutlineFire,
   HiOutlineBolt,
@@ -249,7 +250,7 @@ export function BanDetectionPage() {
             <div className="bd-hero-kicker">Monitoring</div>
           <h1 className="page-title">
             <HiOutlineFire style={{ verticalAlign: '-0.15em', marginRight: '0.4rem' }} />
-            Ban Detection
+            PoSe Watch
           </h1>
           <p className="page-subtitle">
             Current masternode state and confirmed PoSe ban history. Compare events after
@@ -296,13 +297,13 @@ export function BanDetectionPage() {
         </header>
         <div className="bd-monitor-status" role="status">
           {isError ? 'Ban analysis unavailable. Refresh to retry.' : isLoading ? 'Loading ban analysis…' : data ? <>
-            Updated {new Date(data.generatedAt).toLocaleString()} · {paused ? 'Auto-refresh paused' : 'Refresh every 90s while visible'}
+            Updated <TimeText value={data.generatedAt} /> · {paused ? 'Auto-refresh paused' : 'Refresh every 90s while visible'}
             {' · '}{data.rpcAvailable ? 'Live RPC available' : 'Live RPC unavailable — current counts unknown'}
             {data.dataStatus === 'stale' && ' · Cached historical data — refresh failed'}
           </> : 'No data available'}
         </div>
         {data?.analysisScope && <p className="mnh-panel-sub">
-          {periodLabel} · History from {new Date(data.analysisScope.from).toLocaleString()}
+          {periodLabel} · History from <TimeText value={data.analysisScope.from} />
           {data.analysisScope.historyLimited && ' · Limited to the retained history window'}
           {data.analysisScope.unclassifiedEvents > 0 && ` · ${data.analysisScope.unclassifiedEvents} events excluded: ban block unknown`}
         </p>}
@@ -556,8 +557,8 @@ export function BanDetectionPage() {
               <td className="mnh-mono"><Link to={nodePermalink(node.proTxHash || node.service || node.nodeId)}>{node.service || 'Unknown service'}</Link><div title={node.proTxHash || node.nodeId} className="mnh-meta-line">{truncateHash(node.proTxHash || node.nodeId, 8)}</div></td>
               <td>{node.banCount}</td>
               <td>{node.lastBanHeight != null ? <Link to={`/block/${node.lastBanHeight}`}>{formatNumber(node.lastBanHeight)}</Link> : 'Unknown'}</td>
-              <td>{new Date(node.lastBanAt).toLocaleString()}</td>
-              <td>{node.recoveredAt ? new Date(node.recoveredAt).toLocaleString() : 'Not recorded'}</td>
+              <td><TimeText value={node.lastBanAt} /></td>
+              <td><TimeText value={node.recoveredAt} fallback="Not recorded" /></td>
               <td>{data?.rpcAvailable && data.dataStatus !== 'stale' ? node.currentStatus ?? 'Unknown / not registered' : 'Unknown'}</td>
               <td>{data?.rpcAvailable && data.dataStatus !== 'stale' ? node.currentPenalty ?? 'Unknown' : 'Unknown'}</td>
               <td><button type="button" className="bd-ban-evidence"
@@ -638,7 +639,7 @@ function WaveCard({ wave }: { wave: BanWaveDetail }) {
           {wave.totalNodes} nodes | {wave.stillBannedCount ?? 0} still banned | {wave.recoveredCount ?? 0} recovered | {humanDuration(wave.durationSeconds)}
         </span>
         <span className="bd-wave-meta">
-          {new Date(wave.startedAt).toLocaleString()} |{' '}
+          <TimeText value={wave.startedAt} /> |{' '}
           {wave.uniqueCountries} countr{wave.uniqueCountries === 1 ? 'y' : 'ies'} |{' '}
           {wave.uniqueIps} IP{wave.uniqueIps === 1 ? '' : 's'} |{' '}
           {wave.uniqueOperators} operator{wave.uniqueOperators === 1 ? '' : 's'} | versions: {(wave.versions || []).slice(0, 3).join(', ') || 'not observed'}
@@ -683,12 +684,12 @@ function WaveCard({ wave }: { wave: BanWaveDetail }) {
               <tbody>
                 {wave.nodes.map((n) => (
                   <tr key={n.nodeId + n.atIso}>
-                    <td className="mnh-mono" title={n.detectedAt || n.atIso}>
-                      {new Date(n.detectedAt || n.atIso).toLocaleString()}
+                    <td className="mnh-mono">
+                      <TimeText value={n.detectedAt || n.atIso} />
                     </td>
                     <td>{n.poseBanHeight != null ? <Link to={`/block/${n.poseBanHeight}`}>{formatNumber(n.poseBanHeight)}</Link> : 'Unknown'}</td>
-                    <td className="mnh-mono" title={n.recoveredAt || undefined}>
-                      {n.recoveredAt ? new Date(n.recoveredAt).toLocaleString() : 'not recovered yet'}
+                    <td className="mnh-mono">
+                      <TimeText value={n.recoveredAt} fallback="not recovered yet" />
                     </td>
                     <td>
                       <span className={`bd-status-badge bd-status-${n.status || 'banned'}`}>
@@ -707,7 +708,7 @@ function WaveCard({ wave }: { wave: BanWaveDetail }) {
                         {n.walletVersion || (typeof n.protocolVersion === 'number' ? `protocol ${n.protocolVersion}` : 'not observed')}
                       </span>
                       {n.versionObservedAt && (
-                        <div className="mnh-meta-line">Last observed {new Date(n.versionObservedAt).toLocaleString()}{new Date(n.versionObservedAt).getTime() > new Date(n.atIso).getTime() ? ' · after this event' : ''}</div>
+                        <div className="mnh-meta-line">Last observed <TimeText value={n.versionObservedAt} />{new Date(n.versionObservedAt).getTime() > new Date(n.atIso).getTime() ? ' · after this event' : ''}</div>
                       )}
                       <div className="mnh-meta-line">Last-known version; not proof of ban cause</div>
                     </td>

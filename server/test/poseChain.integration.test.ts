@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { poseChainDataSchema, poseChainQuerySchema, banAttributionDataSchema } from '@defcon/shared/dist/contracts';
 import { config } from '../src/config';
 import { PoseChainBlock } from '../src/models/PoseChainBlock';
@@ -53,6 +53,8 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
     };
   }
   beforeEach(async () => {
+    // A system clock that steps back between a write and a read would put the record in the future.
+    vi.useFakeTimers({ toFake: ['Date'] });
     await Promise.all([PoseChainBlock.deleteMany({}), PoseChainState.deleteMany({}), PoseObservation.deleteMany({}), NetworkNoiseNodeState.deleteMany({}), NetworkNoiseObservation.deleteMany({}), NetworkNoiseBaseline.deleteMany({}), NetworkNoiseBatch.deleteMany({})]);
     Object.assign(config.poseChain, { enabled: true, startHeight: 100, blocksPerRun: 10,
       confirmations: 1, reorgMaxDepth: 5, membershipRetryBlocks: 5, attributionEnabled: false, attributionBlocksPerRun: 5 });
@@ -77,6 +79,9 @@ describe.skipIf(!baseUri)('canonical PoSe collection with disposable MongoDB', (
       throw new Error(`Unexpected RPC ${method}`);
     }) };
     service = new PoseChainService(rpc as { call<T>(method: string, params?: unknown[]): Promise<T> });
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
 
   it('backfills a contiguous bounded prefix including empty blocks and is idempotent', async () => {

@@ -376,7 +376,6 @@ export default function BubblemapsPage() {
                   </div>
                 </div>
                 <div className="bubblemaps-selected-links">
-                  <Link to={`/searchv2?q=${encodeURIComponent(selectedNode.address)}`}>SearchV2</Link>
                   <Link to={`/address/${encodeURIComponent(selectedNode.address)}`}>Address Page</Link>
                 </div>
               </div>

@@ -76,27 +76,6 @@
   font-weight: 700;
 }
 
-.dashboard-hero-search {
-  grid-column: 1 / -1;
-  width: 100%;
-}
-
-.dashboard-hero-search .search-input {
-  min-height: 50px;
-  padding-left: 2.7rem;
-  background: var(--surface-muted);
-  font-size: 0.95rem;
-}
-
-.dashboard-hero-search .search-input:focus {
-  background: var(--surface);
-}
-
-.dashboard-hero-search .search-icon {
-  left: 14px;
-  font-size: 1.05rem;
-}
-
 .dashboard-section-header {
   margin-bottom: 0;
 }

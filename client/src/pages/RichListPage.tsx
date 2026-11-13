@@ -6,6 +6,7 @@ import { fetchRichList, fetchDistribution, fetchStats } from '../services/api';
 import { formatNumber, truncateHash, formatAge, formatDate } from '../utils/formatters';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import './PageStyles.css';
+import { addressPath } from '../utils/routes';
 
 export default function RichListPage() {
   const [page, setPage] = useState(1);
@@ -95,7 +96,7 @@ export default function RichListPage() {
                           </span>
                         </td>
                         <td>
-                          <Link to={`/searchv2?q=${encodeURIComponent(entry.address)}`} className="hash mono">
+                          <Link to={addressPath(entry.address)} className="hash mono">
                             {truncateHash(entry.address, 12)}
                           </Link>
                         </td>

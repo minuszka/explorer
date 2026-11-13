@@ -3,14 +3,17 @@ import ReactDOM from 'react-dom/client';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { BrowserRouter } from 'react-router-dom';
 import App from './App';
-import { ThemeProvider, applyThemeAttribute, resolveInitialTheme } from './context/ThemeContext';
 import { AutoRefreshProvider } from './context/AutoRefreshContext';
 import { queryClient } from './queryClient';
+// Self-hosted fonts: the production CSP only allows fonts and stylesheets from this origin.
+import '@fontsource-variable/space-grotesk/wght.css';
+import '@fontsource/ibm-plex-mono/latin-400.css';
+import '@fontsource/ibm-plex-mono/latin-500.css';
+import '@fontsource/ibm-plex-mono/latin-600.css';
 import './styles/globals.css';
 import { readBootData } from './utils/bootData';
 import { watchChunkFailures } from './utils/releaseReload';
 
-applyThemeAttribute(resolveInitialTheme());
 watchChunkFailures();
 
 // Server-injected first-paint data (see buildBootScript in server/src/index.ts).
@@ -28,11 +31,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <QueryClientProvider client={queryClient}>
       <BrowserRouter>
-        <ThemeProvider>
-          <AutoRefreshProvider>
-            <App />
-          </AutoRefreshProvider>
-        </ThemeProvider>
+        <AutoRefreshProvider>
+          <App />
+        </AutoRefreshProvider>
       </BrowserRouter>
     </QueryClientProvider>
   </React.StrictMode>

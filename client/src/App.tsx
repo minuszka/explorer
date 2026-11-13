@@ -29,7 +29,6 @@ const ApiPage = lazy(() => import('./pages/ApiPage'));
 const TestPage = TEST_PAGE_ENABLED ? lazy(() => import('./pages/TestPage')) : null;
 const AboutPage = lazy(() => import('./pages/AboutPage'));
 const SearchResultsPage = lazy(() => import('./pages/SearchResultsPage'));
-const SearchV2Page = lazy(() => import('./pages/SearchV2Page'));
 const NotFoundPage = lazy(() => import('./pages/NotFoundPage'));
 
 function PageFallback() {
@@ -49,6 +48,12 @@ function PageFallback() {
 
 function withSuspense(page: ReactNode) {
   return <Suspense fallback={<PageFallback />}>{page}</Suspense>;
+}
+
+/** Old /searchv2 links keep working: the query moves to /search, which opens the object's own page. */
+function LegacySearchRedirect() {
+  const { search } = useLocation();
+  return <Navigate to={{ pathname: '/search', search }} replace />;
 }
 
 export default function App() {
@@ -94,7 +99,7 @@ export default function App() {
         {TEST_PAGE_ENABLED && TestPage && <Route path="test" element={withSuspense(<TestPage />)} />}
         <Route path="about" element={withSuspense(<AboutPage />)} />
         <Route path="search" element={withSuspense(<SearchResultsPage />)} />
-        <Route path="searchv2" element={withSuspense(<SearchV2Page />)} />
+        <Route path="searchv2" element={<LegacySearchRedirect />} />
         <Route path="*" element={withSuspense(<NotFoundPage />)} />
       </Route>
     </Routes>

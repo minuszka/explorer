@@ -16,7 +16,7 @@ test('direct operator and information URLs load their route shells @smoke', asyn
   await expect(page.getByRole('heading', { name: 'Node Version & Chain Inventory' })).toBeVisible();
 
   await page.goto('/ban-detection');
-  await expect(page.getByRole('heading', { name: 'Ban Detection' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'PoSe Watch' })).toBeVisible();
 });
 
 test('API documentation is derived from the live OpenAPI contract @smoke', async ({ page }) => {

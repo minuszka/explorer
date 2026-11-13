@@ -1,8 +1,9 @@
+/* The explorer has a single dark theme; there is no light variant and no theme switch. */
 :root {
   color-scheme: dark;
 
-  /* Shared visual scale. Theme files own colour; these keep layout and motion consistent. */
-  --font-sans: 'Space Grotesk', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  /* Shared visual scale. Colour tokens follow below; these keep layout and motion consistent. */
+  --font-sans: 'Space Grotesk Variable', 'Space Grotesk', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
   --font-mono: 'IBM Plex Mono', 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --space-1: 0.25rem;
@@ -25,7 +26,7 @@
   --ease-standard: cubic-bezier(0.2, 0, 0, 1);
 }
 
-:root[data-theme='dark'] {
+:root {
   --bg: #07111f;
   --bg-soft: #0b1626;
   --surface: #101c2b;
@@ -62,48 +63,8 @@
   --card-shadow: 0 2px 10px rgba(0, 0, 0, 0.18);
 }
 
-:root[data-theme='light'] {
-  color-scheme: light;
-
-  --bg: #f4ebdd;
-  --bg-soft: #efe2cf;
-  --surface: #fff8ee;
-  --surface-elevated: #faf0e3;
-  --surface-muted: #f1e3d1;
-
-  --border: #d9c3a8;
-  --border-soft: #e7d6c1;
-
-  --text: #2b160a;
-  --text-muted: #6f4e37;
-  --text-subtle: #9a7b61;
-
-  --accent: #a86a32;
-  --accent-hover: #8a4f22;
-  --accent-soft: rgba(168, 106, 50, 0.12);
-  --accent-contrast: #ffffff;
-
-  --success: #5d8a55;
-  --success-soft: rgba(93, 138, 85, 0.12);
-
-  --warning: #c2852f;
-  --danger: #b94a3a;
-  --info: #8f6a50;
-
-  --focus-ring: #8a4f22;
-  --chart-series-1: #2f67bb;
-  --chart-series-2: #397841;
-  --chart-series-3: #a56714;
-  --chart-series-4: #7854b8;
-  --chart-series-5: #227896;
-  --chart-series-6: #b94a3a;
-
-  --card-shadow: 0 12px 32px rgba(72, 45, 24, 0.08);
-}
-
 /* Legacy aliases used across existing pages/components */
-:root[data-theme='dark'],
-:root[data-theme='light'] {
+:root {
   --bg-primary: var(--bg);
   --bg-secondary: var(--bg-soft);
   --bg-tertiary: var(--surface-muted);
@@ -182,11 +143,4 @@
 
   --scrollbar-track: var(--surface-muted);
   --scrollbar-thumb: color-mix(in oklab, var(--border) 74%, var(--accent) 26%);
-}
-
-:root[data-theme='light'] {
-  --success-rgb: 93, 138, 85;
-  --warning-rgb: 194, 133, 47;
-  --error-rgb: 185, 74, 58;
-  --info-rgb: 143, 106, 80;
 }

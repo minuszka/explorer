@@ -9,6 +9,7 @@ import { fetchMempool, fetchStats } from '../services/api';
 import { truncateHash, formatAge, formatBytes, formatCoin } from '../utils/formatters';
 import './PageStyles.css';
 import './MempoolPage.css';
+import { txPath } from '../utils/routes';
 
 export default function MempoolPage() {
   const mempoolQuery = useQuery({
@@ -83,7 +84,7 @@ export default function MempoolPage() {
                 {txs.map((tx) => (
                   <tr key={tx.txid}>
                     <td>
-                      <Link to={`/searchv2?q=${encodeURIComponent(tx.txid)}`} className="hash mono">
+                      <Link to={txPath(tx.txid)} className="hash mono">
                         {truncateHash(tx.txid, 12)}
                       </Link>
                     </td>

@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import type { BanAttributionProof } from '@defcon/shared/dist/contracts';
 import { fetchBanAttribution, fetchBanObservations } from '../services/api';
+import TimeText from './ui/TimeText';
 import './BannedByPanel.css';
 
 function fresh(timestamp: string | null | undefined, now: number) {
@@ -23,7 +24,7 @@ function Observations({ proof, enabled, now, paused }: { proof: BanAttributionPr
       {data.events.map(event => <article key={event.eventKey}>
         <strong>{event.kind} · log_observed / unverified</strong>
         <p>{event.observerCount} distinct reporters in this event group: {event.observerNodeIds.join(', ') || 'Unknown'}</p>
-        <p>Reported {new Date(event.lastReportedAt).toLocaleString()}{event.hasConflictingScores ? ' · Conflicting reported scores' : ''}</p>
+        <p>Reported <TimeText value={event.lastReportedAt} />{event.hasConflictingScores ? ' · Conflicting reported scores' : ''}</p>
         {event.scoreVariants.map((score, index) => <p key={index}>Reported penalty {score.previousPenalty ?? 'Unknown'} → {score.penalty ?? 'Unknown'} · ban height {score.poseBanHeight ?? 'Unknown'} · member valid {score.memberValid === null ? 'Unknown' : String(score.memberValid)}</p>)}
       </article>)}
       <p>Page {page} · up to 20 event groups per page</p>
@@ -43,7 +44,7 @@ function Proof({ proof, now, paused }: { proof: BanAttributionProof; now: number
       <p>Historical ban at <Link to={`/block/${proof.blockHash}`}>block {proof.blockHeight}</Link>. This does not describe the node's current ban state.</p>
       <p>Node: <code>{proof.proTxHash}</code></p><p>Block: <code>{proof.blockHash}</code></p>
       <p>Parent: <Link to={`/block/${proof.parentHash}`}>{proof.parentHash}</Link></p>
-      <p>Block time {new Date(proof.blockTime).toLocaleString()} · scoring checked {new Date(proof.checkedAt).toLocaleString()}</p>
+      <p>Block time <TimeText value={proof.blockTime} /> · scoring checked <TimeText value={proof.checkedAt} /></p>
     </details>
     <details><summary>2. Penalty · verified scoring</summary>
       <p>Previous block {p.previousBlockPenalty}; before this commitment {p.beforePenalty} → after {p.afterPenalty} / maximum {p.maxPenalty}.</p>
@@ -86,7 +87,7 @@ export function BannedByPanel({ identity, height, paused }: { identity: string; 
         : <><strong className="ban-evidence-badge">BANNED_BY · chain · verified historical ban</strong>
           <p>{data.message}</p><p>{data.hint}</p>
           <Proof key={`${data.proof.blockHash}:${data.proof.txid}`} proof={data.proof} now={now} paused={paused} /></>}
-      {data && <p>Collected prefix {data.coverage.startHeight}–{data.coverage.confirmedThroughHeight} · {data.coverage.caughtUp ? 'collected range caught up' : 'partial collected range'} · response {new Date(data.generatedAt).toLocaleString()}. Collected coverage is not full historical coverage.</p>}
+      {data && <p>Collected prefix {data.coverage.startHeight}–{data.coverage.confirmedThroughHeight} · {data.coverage.caughtUp ? 'collected range caught up' : 'partial collected range'} · response <TimeText value={data.generatedAt} />. Collected coverage is not full historical coverage.</p>}
     </>}
   </section>;
 }

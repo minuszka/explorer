@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { Link, useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import {
   HiOutlineArrowRight,
   HiOutlineArrowTrendingUp,
@@ -8,7 +8,6 @@ import {
   HiOutlineChevronDown,
   HiOutlineChevronUp,
   HiOutlineCube,
-  HiOutlineMagnifyingGlass,
 } from 'react-icons/hi2';
 import { fetchBlockTxs, fetchDashboardOverview } from '../services/api';
 import {
@@ -22,6 +21,7 @@ import {
 import { useMarketSnapshot } from '../hooks/useMarketSnapshot';
 import type { DashboardBlockView, DashboardTxView, TxListItemView } from '../types/api';
 import './DashboardPage.css';
+import { txPath } from '../utils/routes';
 const TX_PREVIEW_MAX = 12;
 const REWARD_TOLERANCE = 0.0000001;
 const PROTOCOL_TX_TOLERANCE = 0.0000001;
@@ -63,10 +63,11 @@ function rewardRoleLabel(role: RewardRole): string {
   return 'Transfer';
 }
 
+/** The server buckets flow by UTC hour, so the hour is shown in UTC too, not in the browser's time zone. */
 function formatFlowHour(hourIso: string): string {
   const d = new Date(hourIso);
   if (Number.isNaN(d.getTime())) return hourIso.slice(11, 16);
-  return `${String(d.getHours()).padStart(2, '0')}:00`;
+  return `${String(d.getUTCHours()).padStart(2, '0')}:00`;
 }
 
 function formatMarketAge(ageSeconds: number | null | undefined): string | null {
@@ -180,7 +181,7 @@ function LatestBlockRow({ block, stakeRewardPerBlock, isExpanded, onToggle, pric
                 return (
                   <div key={tx.txid} className="latest-inline-item">
                     <div className="latest-inline-main">
-                      <Link to={`/searchv2?q=${encodeURIComponent(tx.txid)}`} className="mono hash">
+                      <Link to={txPath(tx.txid)} className="mono hash">
                         {truncateHash(tx.txid, 14)}
                       </Link>
                       {tx.isDonation && <span className="badge donate">Donate</span>}
@@ -233,8 +234,6 @@ function LatestBlockRow({ block, stakeRewardPerBlock, isExpanded, onToggle, pric
 }
 
 export default function DashboardPage() {
-  const navigate = useNavigate();
-  const [searchQuery, setSearchQuery] = useState('');
   const [expandedBlockHeight, setExpandedBlockHeight] = useState<number | null>(null);
   const { data: overview, isLoading: overviewLoading } = useQuery({
     queryKey: ['dashboard-overview'],
@@ -273,13 +272,6 @@ export default function DashboardPage() {
   const stakeRewardPerBlock =
     typeof stats?.stakingReward === 'number' && stats.stakingReward > 0 ? stats.stakingReward : null;
 
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    const query = searchQuery.trim();
-    if (!query) return;
-    navigate(`/searchv2?q=${encodeURIComponent(query)}`);
-  };
-
   const formatCompactCoin = (value: number) =>
     new Intl.NumberFormat('en-US', {
       notation: 'compact',
@@ -308,21 +300,6 @@ export default function DashboardPage() {
             </span>
           )}
         </div>
-
-        <form className="search-container dashboard-hero-search" onSubmit={handleSearch}>
-          <label className="sr-only" htmlFor="dashboard-search">
-            Search the explorer
-          </label>
-          <HiOutlineMagnifyingGlass className="search-icon" aria-hidden="true" />
-          <input
-            id="dashboard-search"
-            type="search"
-            className="search-input"
-            placeholder="Search block height, hash, transaction, or address"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </form>
 
       </section>
 
@@ -374,7 +351,7 @@ export default function DashboardPage() {
               <div className="latest-placeholder">No transactions available yet.</div>
             ) : (
               txs.map((tx) => (
-                <Link to={`/searchv2?q=${encodeURIComponent(tx.txid)}`} key={tx.txid} className="latest-item">
+                <Link to={txPath(tx.txid)} key={tx.txid} className="latest-item">
                   <div className="latest-item-icon tx-icon">
                     <HiOutlineBanknotes />
                   </div>
@@ -465,7 +442,7 @@ export default function DashboardPage() {
                 <div
                   key={point.hour}
                   className="flow-bar-item"
-                  title={`${formatFlowHour(point.hour)} | ${point.blocks} blocks | ${point.txs} txs`}
+                  title={`${formatFlowHour(point.hour)} UTC | ${point.blocks} blocks | ${point.txs} txs`}
                 >
                   <span className="flow-bar flow-bar-blocks" style={{ height: `${point.blocksPct}%` }} />
                   <span className="flow-bar flow-bar-txs" style={{ height: `${point.txsPct}%` }} />
@@ -476,7 +453,7 @@ export default function DashboardPage() {
               <span><i className="flow-dot flow-dot-blocks" /> Blocks/hour</span>
               <span><i className="flow-dot flow-dot-txs" /> Txs/hour</span>
               <span>
-                {formatFlowHour(flowBars[0].hour)} - {formatFlowHour(flowBars[flowBars.length - 1].hour)}
+                {formatFlowHour(flowBars[0].hour)} - {formatFlowHour(flowBars[flowBars.length - 1].hour)} UTC
               </span>
             </div>
           </>

@@ -15,6 +15,7 @@ const ROUTE_PRELOADERS: Record<string, () => Promise<unknown>> = {
   '/provider-tags': () => import('./pages/ProviderTagsPage'),
   '/ban-detection': () => import('./pages/BanDetectionPage'),
   '/devtools/pose-penalty': () => import('./pages/PosePenaltyWatchPage'),
+  '/devtools/node-inventory': () => import('./pages/NodeInventoryPage'),
   '/devtools/network-noise': () => import('./pages/NetworkNoisePage'),
   '/api': () => import('./pages/ApiPage'),
   '/about': () => import('./pages/AboutPage'),

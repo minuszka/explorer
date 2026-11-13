@@ -1,84 +1,131 @@
-import { useEffect } from 'react';
-import { useSearchParams, Link, useNavigate } from 'react-router-dom';
-import { HiOutlineMagnifyingGlass, HiOutlineCube, HiOutlineWallet } from 'react-icons/hi2';
+import { useEffect, useState, type FormEvent } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
+import { HiOutlineMagnifyingGlass } from 'react-icons/hi2';
 import { fetchSearch } from '../services/api';
+import StatePanel from '../components/ui/StatePanel';
+import {
+  errorStatus,
+  getErrorMessage,
+  isNotFoundError,
+  looksLikeDfcnAddress,
+  looksLikeTxid,
+  retryFailedRequestOnce,
+} from '../components/flow/flowModel';
+import { addressPath, blockPath, txPath } from '../utils/routes';
 import './PageStyles.css';
+import '../components/flow/flow.css';
 
-export default function SearchResultsPage() {
-  const [searchParams] = useSearchParams();
+/**
+ * Resolves one query and replaces this history entry with the object's own page, so Back
+ * returns to where the search started instead of bouncing through this page again.
+ */
+function SearchResolver({ query }: { query: string }) {
   const navigate = useNavigate();
-  const query = searchParams.get('q') || '';
-
   const searchQuery = useQuery({
     queryKey: ['search', query],
     queryFn: () => fetchSearch(query),
-    enabled: query.length > 0,
+    retry: retryFailedRequestOnce,
   });
-  const data = searchQuery.data ?? null;
-  const loading = searchQuery.isLoading || searchQuery.isFetching;
-  const error =
-    searchQuery.error != null
-      ? ((searchQuery.error as { response?: { data?: { error?: { message?: string } } } })?.response?.data?.error?.message ||
-          (searchQuery.error as Error)?.message ||
-          'Search failed')
-      : null;
+  const result = searchQuery.isPlaceholderData ? undefined : searchQuery.data;
 
-  // Auto-redirect to the right page if found
+  let target: string | null = null;
+  if (result?.type === 'block') target = blockPath(result.result.height);
+  else if (result?.type === 'transaction') target = txPath(result.result.txid);
+  else if (result?.type === 'address') target = addressPath(result.result.address);
+  else if (searchQuery.error) {
+    // The search index may not have it yet; a txid or address still has its own page, which
+    // asks the API directly and shows its own "not found" state.
+    if (looksLikeTxid(query)) target = txPath(query);
+    else if (looksLikeDfcnAddress(query)) target = addressPath(query);
+  }
+
   useEffect(() => {
-    if (!data) return;
-    if (data.type === 'block') {
-      navigate(`/searchv2?q=${encodeURIComponent(String(data.result.height))}`, { replace: true });
-    } else if (data.type === 'transaction') {
-      navigate(`/searchv2?q=${encodeURIComponent(data.result.txid)}`, { replace: true });
-    } else if (data.type === 'address') {
-      navigate(`/searchv2?q=${encodeURIComponent(data.result.address)}`, { replace: true });
-    }
-  }, [data, navigate]);
+    if (target) navigate(target, { replace: true });
+  }, [navigate, target]);
+
+  if (target || searchQuery.isPending) {
+    return <StatePanel title="Searching..." description={`Looking for "${query}" in blocks, transactions and addresses.`} />;
+  }
+
+  if (isNotFoundError(searchQuery.error)) {
+    return (
+      <StatePanel
+        title="No results found"
+        description={`No block, transaction or address matches "${query}".`}
+        action={
+          <div className="searchv2-state-actions">
+            <Link to="/blocks" className="btn btn-secondary">Latest Blocks</Link>
+            <Link to="/richlist" className="btn btn-secondary">Rich List</Link>
+          </div>
+        }
+      />
+    );
+  }
+
+  if (errorStatus(searchQuery.error) === 400) {
+    return (
+      <StatePanel
+        title="That search is not valid"
+        description={getErrorMessage(searchQuery.error, 'The search query was rejected.')}
+      />
+    );
+  }
 
   return (
-    <div className="fade-in">
+    <StatePanel
+      tone="danger"
+      title="Search is not available right now"
+      description={getErrorMessage(searchQuery.error, 'The search request failed.')}
+    />
+  );
+}
+
+export default function SearchResultsPage() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const query = (searchParams.get('q') || '').trim();
+  const [draftQuery, setDraftQuery] = useState(query);
+
+  useEffect(() => {
+    setDraftQuery(query);
+  }, [query]);
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const normalized = draftQuery.trim();
+    setSearchParams(normalized ? { q: normalized } : {});
+  };
+
+  return (
+    <div className="fade-in searchv2-page">
       <div className="page-header">
-        <h1 className="page-title"><HiOutlineMagnifyingGlass /> Search Results</h1>
-        <p className="page-subtitle">
-          Results for: <span className="mono value-highlight">{query}</span>
-        </p>
+        <h1 className="page-title">
+          <HiOutlineMagnifyingGlass /> Search
+        </h1>
       </div>
 
-      <div className="card">
-        {!query ? (
-          <div className="placeholder-content">
-            <div className="placeholder-icon"><HiOutlineMagnifyingGlass /></div>
-            <h2>Enter a Search Query</h2>
-            <p>Search by block height, block hash, transaction ID, or address</p>
+      <div className="card searchv2-query-card">
+        <form role="search" onSubmit={handleSubmit} className="searchv2-query-form">
+          <div className="search-container searchv2-query-input">
+            <HiOutlineMagnifyingGlass className="search-icon" />
+            <input
+              type="search"
+              className="search-input"
+              aria-label="Search the chain"
+              placeholder="Block height or hash, transaction ID, or address"
+              value={draftQuery}
+              onChange={(event) => setDraftQuery(event.target.value)}
+            />
           </div>
-        ) : loading ? (
-          <div className="placeholder-content">
-            <div className="placeholder-icon"><HiOutlineMagnifyingGlass /></div>
-            <h2>Searching...</h2>
-            <p>Looking for "{query}" in blocks, transactions, and addresses</p>
-          </div>
-        ) : error ? (
-          <div className="placeholder-content">
-            <div className="placeholder-icon"><HiOutlineMagnifyingGlass /></div>
-            <h2>No Results Found</h2>
-            <p>No blocks, transactions, or addresses match "{query}"</p>
-            <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-              <Link to="/blocks" className="btn btn-secondary">
-                <HiOutlineCube /> Browse Blocks
-              </Link>
-              <Link to="/richlist" className="btn btn-secondary">
-                <HiOutlineWallet /> Rich List
-              </Link>
-            </div>
-          </div>
-        ) : (
-          <div className="placeholder-content">
-            <div className="placeholder-icon"><HiOutlineMagnifyingGlass /></div>
-            <h2>Redirecting...</h2>
-          </div>
-        )}
+          <button type="submit" className="btn btn-primary">Search</button>
+        </form>
       </div>
+
+      {query ? (
+        <SearchResolver key={query} query={query} />
+      ) : (
+        <StatePanel title="Enter a search query" description="Search by block height, block hash, transaction ID or address." />
+      )}
     </div>
   );
 }

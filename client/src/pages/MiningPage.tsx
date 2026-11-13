@@ -21,8 +21,7 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { fetchCoin, fetchLatestBlocks, fetchMasternodeSummary, fetchStats } from '../services/api';
 import { useChartAnimation } from '../utils/chartAnimation';
-import { formatNumber, formatDifficulty, formatSmallPrice } from '../utils/formatters';
-import { useTheme } from '../context/ThemeContext';
+import { formatNumber, formatDifficulty, formatSmallPrice, formatUtcDateTime } from '../utils/formatters';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { useMarketSnapshot } from '../hooks/useMarketSnapshot';
 import './PageStyles.css';
@@ -41,9 +40,14 @@ function formatDuration(seconds: number): string {
   return `${m}m`;
 }
 
+const chartColor = 'var(--chart-series-1)';
+
+// Chart axis labels in UTC: the time of day for a short window, the day for a longer one.
+const AXIS_TIME = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' });
+const AXIS_DAY = new Intl.DateTimeFormat('en-US', { timeZone: 'UTC', month: 'short', day: 'numeric' });
+const SHORT_WINDOW_SECONDS = 48 * 3600;
+
 export default function MiningPage() {
-  const { theme } = useTheme();
-  const chartColor = theme === 'dark' ? '#7ab9ff' : '#2f8fff';
   const isPageVisible = usePageVisibility();
   const chartAnimation = useChartAnimation();
 
@@ -84,6 +88,11 @@ export default function MiningPage() {
     () => (blocks || []).slice().reverse().map((b) => ({ timestamp: b.time, difficulty: b.difficulty })),
     [blocks]
   );
+  const difficultyWindowSeconds = difficultyHistory.length > 1
+    ? difficultyHistory[difficultyHistory.length - 1].timestamp - difficultyHistory[0].timestamp
+    : 0;
+  const formatDifficultyTick = (seconds: number) =>
+    (difficultyWindowSeconds < SHORT_WINDOW_SECONDS ? AXIS_TIME : AXIS_DAY).format(new Date(seconds * 1000));
 
   // ── Masternode income & ROI calculations (memoized) ─────────────
   const {
@@ -473,7 +482,8 @@ export default function MiningPage() {
       {/* ── Charts ───────────────────────────────────────────────── */}
       <div className="card rewards-activity-card">
           <div className="card-header">
-            <h2 className="card-title"><HiOutlineArrowTrendingUp /> Network Activity</h2>
+            <h2 className="card-title"><HiOutlineArrowTrendingUp /> Difficulty, last {difficultyHistory.length} blocks</h2>
+            <span className="text-muted">Times in UTC</span>
           </div>
           {difficultyHistory.length > 1 ? (
             <ResponsiveContainer width="100%" height={280}>
@@ -486,7 +496,8 @@ export default function MiningPage() {
                 </defs>
                 <XAxis
                   dataKey="timestamp"
-                  tickFormatter={(t) => new Date(t * 1000).toLocaleDateString('en', { month: 'short', day: 'numeric' })}
+                  tickFormatter={formatDifficultyTick}
+                  minTickGap={24}
                   stroke="var(--text-muted)" fontSize={11} tickLine={false} axisLine={false}
                 />
                 <YAxis
@@ -495,7 +506,7 @@ export default function MiningPage() {
                 />
                 <Tooltip
                   contentStyle={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: '8px' }}
-                  labelFormatter={(t) => new Date(t * 1000).toLocaleDateString()}
+                  labelFormatter={(t) => formatUtcDateTime(Number(t) * 1000)}
                   formatter={(v: number) => [formatDifficulty(v), 'Difficulty']}
                 />
                 <Area

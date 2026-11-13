@@ -1,5 +1,5 @@
 import mongoose from 'mongoose';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { poseObservedEventsApiResponseSchema, poseEventsQuerySchema } from '@defcon/shared/dist/contracts';
 import { config } from '../src/config';
 import { PoseObservation } from '../src/models/PoseObservation';
@@ -23,7 +23,12 @@ describe.skipIf(!uri)('PoSe telemetry with disposable MongoDB', () => {
     await Promise.all([PoseObservation.init(), NetworkNoiseNodeState.init(), NetworkNoiseObservation.init()]);
   });
   beforeEach(async () => {
+    // A system clock that steps back between a write and a read would put the record in the future.
+    vi.useFakeTimers({ toFake: ['Date'] });
     await Promise.all([PoseObservation.deleteMany({}), NetworkNoiseNodeState.deleteMany({}), NetworkNoiseObservation.deleteMany({}), NetworkNoiseBaseline.deleteMany({}), NetworkNoiseBatch.deleteMany({})]);
+  });
+  afterEach(() => {
+    vi.useRealTimers();
   });
   afterAll(async () => {
     if (mongoose.connection.readyState === 1) await mongoose.connection.dropDatabase();

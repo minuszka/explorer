@@ -6,7 +6,7 @@ import {
 } from 'react-icons/hi2';
 import { useQuery } from '@tanstack/react-query';
 import { fetchBlock, fetchCoin } from '../services/api';
-import { formatNumber } from '../utils/formatters';
+import { formatNumber, formatUtcDateTime } from '../utils/formatters';
 import './PageStyles.css';
 
 export default function AboutPage() {
@@ -29,7 +29,7 @@ export default function AboutPage() {
 
   const genesisTime =
     typeof genesis?.time === 'number'
-      ? new Date(genesis.time * 1000).toLocaleString()
+      ? formatUtcDateTime(genesis.time * 1000)
       : 'N/A';
 
   return (

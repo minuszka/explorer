@@ -23,6 +23,13 @@ async function openBlocksFromDashboard(page: Page) {
 
 const notice = (page: Page) => page.getByRole('status').filter({ hasText: 'Part of the site could not be loaded' });
 
+// Rewards sits in the desktop Masternodes menu; opening the menu preloads only the Masternodes page.
+async function openRewardsMenuItem(page: Page) {
+  const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await navigation.getByRole('button', { name: 'Masternodes', exact: true }).click();
+  return navigation.getByRole('menuitem', { name: 'Rewards', exact: true });
+}
+
 async function expectPanelThenGoHome(page: Page) {
   const panel = page.getByRole('alert').filter({ hasText: 'This page could not be loaded' });
   await expect(panel).toBeVisible();
@@ -180,11 +187,11 @@ for (const [name, setup] of [
     await page.route('**/assets/MiningPage-*.css', missing);
     await page.goto('/about');
     await expect(page.getByRole('heading', { name: 'About DeFCoN' })).toBeVisible();
-    const navigation = page.getByRole('navigation', { name: 'Primary navigation' });
-    await navigation.getByRole('link', { name: 'Rewards', exact: true }).hover();
+    const rewards = await openRewardsMenuItem(page);
+    await rewards.hover();
     await expect(notice(page)).toBeVisible();
 
-    await navigation.getByRole('link', { name: 'Rewards', exact: true }).click();
+    await rewards.click();
     await expect(page.getByRole('heading', { name: 'Network Rewards' })).toBeVisible();
     await expect(notice(page)).toBeVisible();
     await page.waitForTimeout(1000);
@@ -213,7 +220,7 @@ test('a stylesheet that fails after its page opened still offers a reload @smoke
   });
   await page.goto('/about');
   await expect(page.getByRole('heading', { name: 'About DeFCoN' })).toBeVisible();
-  const rewards = page.getByRole('navigation', { name: 'Primary navigation' }).getByRole('link', { name: 'Rewards', exact: true });
+  const rewards = await openRewardsMenuItem(page);
   await rewards.hover();
   await expect.poll(() => requested).toBe(true);
   await rewards.click();

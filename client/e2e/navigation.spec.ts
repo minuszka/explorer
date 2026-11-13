@@ -60,6 +60,82 @@ test('desktop primary and dropdown navigation preserve their routes @smoke', asy
   await expect(page.getByRole('heading', { name: 'Node Version & Chain Inventory' })).toBeVisible();
 });
 
+// The menu groups the masternode pages together and leaves Dev Tools to developer pages. Blocks,
+// Mempool and Bubblemaps stay out of the menu.
+const MENU = [
+  { label: 'Dashboard', items: [] },
+  { label: 'Explorer', items: ['Transactions', 'Rich List'] },
+  { label: 'Masternodes', items: ['Masternode List', 'PoSe Watch', 'Rewards'] },
+  { label: 'Network', items: ['Overview', 'Nodes'] },
+  { label: 'API', items: [] },
+  { label: 'About', items: [] },
+  { label: 'Dev Tools', items: ['Node Inventory', 'Network Noise Monitor', 'PoSe Penalty Watch'] },
+];
+
+test('desktop menu groups the masternode pages under Masternodes @smoke', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Desktop navigation is covered in the desktop project.');
+
+  await page.goto('/about');
+  await expect(page.getByRole('heading', { name: 'About DeFCoN' })).toBeVisible();
+  const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  const topLevel = primaryNavigation.locator(':scope > a, :scope > .header-nav-dropdown > button');
+  await expect(topLevel).toHaveText(MENU.map((entry) => entry.label));
+
+  for (const { label, items } of MENU.filter((entry) => entry.items.length > 0)) {
+    const toggle = primaryNavigation.getByRole('button', { name: label, exact: true });
+    await toggle.click();
+    await expect(primaryNavigation.getByRole('menuitem')).toHaveText(items);
+    await toggle.click();
+    await expect(primaryNavigation.getByRole('menuitem')).toHaveCount(0);
+  }
+
+  // Each masternode page marks Masternodes as the current section, and none marks Dev Tools.
+  for (const [item, url, heading] of [
+    ['PoSe Watch', /\/ban-detection$/, 'PoSe Watch'],
+    ['Rewards', /\/mining$/, 'Network Rewards'],
+    ['Masternode List', /\/masternodes$/, 'Masternodes'],
+  ] as const) {
+    await primaryNavigation.getByRole('button', { name: 'Masternodes', exact: true }).click();
+    await primaryNavigation.getByRole('menuitem', { name: item, exact: true }).click();
+    await expect(page).toHaveURL(url);
+    await expect(page.getByRole('heading', { name: heading, level: 1 })).toBeVisible();
+    await expect(primaryNavigation.getByRole('button', { name: 'Masternodes', exact: true })).toHaveClass(/\bactive\b/);
+    await expect(primaryNavigation.getByRole('button', { name: 'Dev Tools', exact: true })).not.toHaveClass(/\bactive\b/);
+  }
+
+  // Both network pages mark only Network as the current section.
+  for (const [item, url, heading] of [
+    ['Overview', /\/network$/, 'Network'],
+    ['Nodes', /\/chain-health$/, 'Nodes'],
+  ] as const) {
+    await primaryNavigation.getByRole('button', { name: 'Network', exact: true }).click();
+    await primaryNavigation.getByRole('menuitem', { name: item, exact: true }).click();
+    await expect(page).toHaveURL(url);
+    await expect(page.getByRole('heading', { name: heading, exact: true, level: 1 })).toBeVisible();
+    await expect(primaryNavigation.locator(':scope > a.active, :scope > .header-nav-dropdown > button.active'))
+      .toHaveText(['Network']);
+  }
+});
+
+test('hovering Node Inventory in the desktop menu starts loading its page @smoke', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'desktop-chromium', 'Hover preloading only exists on desktop.');
+  let requested = 0;
+  page.on('request', (request) => {
+    if (/\/assets\/NodeInventoryPage-[^/]*\.js$/.test(request.url())) requested += 1;
+  });
+
+  await page.goto('/about');
+  await expect(page.getByRole('heading', { name: 'About DeFCoN' })).toBeVisible();
+  const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  await primaryNavigation.getByRole('button', { name: 'Dev Tools', exact: true }).click();
+  const nodeInventory = primaryNavigation.getByRole('menuitem', { name: 'Node Inventory', exact: true });
+  await expect(nodeInventory).toBeVisible();
+  expect(requested).toBe(0);
+
+  await nodeInventory.hover();
+  await expect.poll(() => requested).toBeGreaterThan(0);
+});
+
 test('desktop header brand and navigation align with the dashboard shell @smoke', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'desktop-chromium', 'This is a desktop alignment check.');
 
@@ -162,18 +238,44 @@ test('mobile drawer exposes the same top-level navigation @smoke', async ({ page
   await expect(page.getByRole('button', { name: 'Open menu' })).toBeVisible();
 });
 
-test('theme preference is persisted after a reload @smoke', async ({ page }) => {
+test('mobile drawer groups the masternode pages under Masternodes @smoke', async ({ page }, testInfo) => {
+  test.skip(testInfo.project.name !== 'mobile-chromium', 'Mobile navigation is covered in the mobile project.');
+
   await page.goto('/about');
-  await page.evaluate(() => window.localStorage.removeItem('defcon-theme'));
-  await page.reload();
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  const primaryNavigation = page.getByRole('navigation', { name: 'Primary navigation' });
+  const topLevel = primaryNavigation.locator(':scope > a, :scope > .mobile-nav-group > .mobile-nav-group-label');
+  await expect(topLevel).toHaveText(MENU.map((entry) => entry.label));
 
-  const before = await page.locator('html').getAttribute('data-theme');
-  await page.getByRole('button', { name: 'Toggle theme' }).click();
-  const after = before === 'dark' ? 'light' : 'dark';
+  for (const { label, items } of MENU.filter((entry) => entry.items.length > 0)) {
+    const group = primaryNavigation.locator('.mobile-nav-group')
+      .filter({ has: page.locator('.mobile-nav-group-label', { hasText: new RegExp(`^${label}$`) }) });
+    await expect(group.getByRole('link')).toHaveText(items);
+  }
 
-  await expect(page.locator('html')).toHaveAttribute('data-theme', after);
-  await expect.poll(() => page.evaluate(() => window.localStorage.getItem('defcon-theme'))).toBe(after);
+  await primaryNavigation.getByRole('link', { name: 'Rewards', exact: true }).click();
+  await expect(page).toHaveURL(/\/mining$/);
+  await expect(page.getByRole('heading', { name: 'Network Rewards', level: 1 })).toBeVisible();
+  await page.getByRole('button', { name: 'Open menu' }).click();
+  await primaryNavigation.getByRole('link', { name: 'PoSe Watch', exact: true }).click();
+  await expect(page).toHaveURL(/\/ban-detection$/);
+  await expect(page.getByRole('heading', { name: 'PoSe Watch', level: 1 })).toBeVisible();
+});
 
-  await page.reload();
-  await expect(page.locator('html')).toHaveAttribute('data-theme', after);
+test('the site stays dark for light-mode visitors and offers no theme switch @smoke', async ({ page }) => {
+  // A visitor whose system prefers light mode and who saved the retired light theme earlier.
+  await page.emulateMedia({ colorScheme: 'light' });
+  await page.addInitScript(() => {
+    window.localStorage.setItem('defcon-theme', 'light');
+  });
+
+  await page.goto('/about');
+  await expect(page.getByRole('heading', { name: 'About DeFCoN' })).toBeVisible();
+  await expect(page.getByRole('button', { name: 'Toggle theme' })).toHaveCount(0);
+
+  const rendered = await page.evaluate(() => ({
+    background: getComputedStyle(document.body).backgroundColor,
+    colorScheme: getComputedStyle(document.documentElement).colorScheme,
+  }));
+  expect(rendered).toEqual({ background: 'rgb(7, 17, 31)', colorScheme: 'dark' });
 });

@@ -5,6 +5,7 @@ import { HiOutlineBanknotes } from 'react-icons/hi2';
 import { fetchTransactionsCursor, type TransactionsCursor } from '../services/api';
 import { formatAge, formatCoin, formatNumber, truncateHash } from '../utils/formatters';
 import './PageStyles.css';
+import { blockPath, txPath } from '../utils/routes';
 
 interface ListedTransaction {
   txid: string;
@@ -77,7 +78,7 @@ export default function TransactionsPage() {
                   {txs.map((tx) => (
                     <tr key={tx.txid}>
                       <td>
-                        <Link to={`/searchv2?q=${encodeURIComponent(tx.txid)}`} className="hash mono">
+                        <Link to={txPath(tx.txid)} className="hash mono">
                           {truncateHash(tx.txid, 12)}
                         </Link>
                         {tx.isDonation && (
@@ -87,7 +88,7 @@ export default function TransactionsPage() {
                         )}
                       </td>
                       <td>
-                        <Link to={`/searchv2?q=${encodeURIComponent(String(tx.blockheight))}`} className="hash">
+                        <Link to={blockPath(tx.blockheight)} className="hash">
                           #{formatNumber(tx.blockheight)}
                         </Link>
                       </td>

@@ -1,0 +1,14 @@
+# Starts deftrack-restore-check.service every week, well after the night's backup.
+# See "Scheduled Backups" in docs/operations.md.
+#
+# No Persistent=, unlike the backup timer: at boot a check catching up could start
+# just before the missed backup and check an old one. A missed check waits a week.
+
+[Unit]
+Description=Weekly DefTrack MongoDB restore check
+
+[Timer]
+OnCalendar=Sun *-*-* 03:45:00 UTC
+
+[Install]
+WantedBy=timers.target

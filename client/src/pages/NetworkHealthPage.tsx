@@ -5,14 +5,23 @@ import { HiOutlineArrowPath, HiOutlineSignal } from 'react-icons/hi2';
 import { fetchDnsSeederNodes, fetchPreReleaseNodes, fetchSeedNodes } from '../services/api';
 import type { DnsSeederNodeView, PreReleaseNodeView, SeedChainStatus, SeedNodeStatus } from '../types/api';
 import { usePageVisibility } from '../hooks/usePageVisibility';
+import { formatNumber, formatUtcTime } from '../utils/formatters';
 import './PageStyles.css';
 
 function formatAge(ms: number): string {
   const seconds = Math.floor((Date.now() - ms) / 1000);
+  // A source clock slightly ahead of this browser is not a negative age.
+  if (seconds < 1) return 'just now';
   if (seconds < 60) return `${seconds}s ago`;
   const minutes = Math.floor(seconds / 60);
   if (minutes < 60) return `${minutes}m ago`;
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m ago`;
+}
+
+// Up to two decimals with English separators ("12.97", "100").
+const PERCENT_VALUE = new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 });
+function formatPercentValue(value: number): string {
+  return PERCENT_VALUE.format(value);
 }
 
 function shortHash(hash: string | null | undefined): string {
@@ -269,7 +278,7 @@ export default function NetworkHealthPage() {
                 <h2 className="card-title">Seed Nodes</h2>
                 <p className="text-muted" style={{ margin: '0.25rem 0 0', fontSize: '0.8rem' }}>
                   {seedReference
-                    ? `Seed baseline confirmed: ${seedReference.height.toLocaleString()} / ${shortHash(seedReference.hash)}`
+                    ? `Seed baseline confirmed: ${formatNumber(seedReference.height)} / ${shortHash(seedReference.hash)}`
                     : 'Seed baseline unavailable: the seeds disagree on the block hash, or their tips are too far apart.'}
                 </p>
               </div>
@@ -322,7 +331,7 @@ export default function NetworkHealthPage() {
                           <td>{seedAvailabilityBadge(seed)}</td>
                           <td>{seedChainBadge(seed.chainStatus, seed.blocksDelta)}</td>
                           <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                            {seed.blockHeight != null ? seed.blockHeight.toLocaleString() : '-'}
+                            {seed.blockHeight != null ? formatNumber(seed.blockHeight) : '-'}
                           </td>
                           <td>
                             <code style={{ fontSize: '0.72rem', color: 'var(--text-subtle)' }}>
@@ -450,7 +459,7 @@ export default function NetworkHealthPage() {
                           <td>{directNodeAvailabilityBadge(node.status, node.checkedAt)}</td>
                           <td>{seedChainBadge(derivedChain.status, derivedChain.delta)}</td>
                           <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                            {typeof node.blockHeight === 'number' ? node.blockHeight.toLocaleString() : '-'}
+                            {typeof node.blockHeight === 'number' ? formatNumber(node.blockHeight) : '-'}
                           </td>
                           <td>
                             <code style={{ fontSize: '0.72rem', color: 'var(--text-subtle)' }}>
@@ -458,7 +467,7 @@ export default function NetworkHealthPage() {
                             </code>
                           </td>
                           <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                            {typeof node.peerCount === 'number' ? node.peerCount.toLocaleString() : '-'}
+                            {typeof node.peerCount === 'number' ? formatNumber(node.peerCount) : '-'}
                           </td>
                           <td>
                             <code style={{ fontSize: '0.72rem' }}>{versionLabel}</code>
@@ -508,7 +517,7 @@ export default function NetworkHealthPage() {
                   {' '}Observed: {dnsSeederData.meta.daemonPeers.observedAt ?? 'unavailable'}.</p>
                 <p>{dnsSeederData.meta.dnsSeeder.returnedRows} endpoints returned from {dnsSeederData.meta.dnsSeeder.receivedRows} feed records;
                   {' '}{dnsSeederData.meta.dnsSeeder.rejectedRows} invalid, {dnsSeederData.meta.dnsSeeder.duplicateRows} duplicate,
-                  {' '}{dnsSeederData.meta.dnsSeeder.omittedRows} omitted by the {dnsSeederData.meta.dnsSeeder.limit.toLocaleString()}-endpoint limit.</p>
+                  {' '}{dnsSeederData.meta.dnsSeeder.omittedRows} omitted by the {formatNumber(dnsSeederData.meta.dnsSeeder.limit)}-endpoint limit.</p>
               </details>
             </div>}
             {dnsSeederLoading ? (
@@ -573,7 +582,7 @@ export default function NetworkHealthPage() {
                             )}
                           </td>
                           <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                            {typeof displayedHeight === 'number' ? displayedHeight.toLocaleString() : '-'}
+                            {typeof displayedHeight === 'number' ? formatNumber(displayedHeight) : '-'}
                           </td>
                           <td>
                             <code style={{ fontSize: '0.72rem', color: 'var(--text-subtle)' }}>
@@ -581,7 +590,7 @@ export default function NetworkHealthPage() {
                             </code>
                           </td>
                           <td style={{ fontVariantNumeric: 'tabular-nums' }}>
-                            {typeof node.uptime2h === 'number' ? `${node.uptime2h.toLocaleString()}%` : '-'}
+                            {typeof node.uptime2h === 'number' ? `${formatPercentValue(node.uptime2h)}%` : '-'}
                           </td>
                           <td>
                             <code style={{ fontSize: '0.72rem' }} title={`Version source: ${node.walletVersion ? node.walletVersionSource : node.protocolVersionSource ?? 'unknown'}`}>{walletVersionLabel}</code>
@@ -614,7 +623,7 @@ export default function NetworkHealthPage() {
         <p className="text-muted" style={{ fontSize: '0.75rem', textAlign: 'right' }}>
           <HiOutlineArrowPath style={{ verticalAlign: 'middle', marginRight: 4 }} />
           Last updated:{' '}
-          {new Date(Math.max(seedUpdatedAt, preReleaseUpdatedAt, dnsSeederUpdatedAt)).toLocaleTimeString()}
+          {formatUtcTime(Math.max(seedUpdatedAt, preReleaseUpdatedAt, dnsSeederUpdatedAt))}
         </p>
       )}
     </div>

@@ -11,11 +11,6 @@
   border: 1px solid var(--border-color);
 }
 
-[data-theme='light'] .mempool-hero {
-  background: var(--bg-card);
-  box-shadow: var(--shadow-card);
-}
-
 .mempool-hero-title {
   display: flex;
   align-items: center;
@@ -26,18 +21,10 @@
   color: var(--text-primary);
 }
 
-[data-theme='dark'] .mempool-hero-title {
-  color: #ffffff;
-}
-
 .mempool-hero-subtitle {
   margin: 0;
   color: var(--text-secondary);
   font-size: 0.9rem;
-}
-
-[data-theme='dark'] .mempool-hero-subtitle {
-  color: rgba(255, 255, 255, 0.7);
 }
 
 .mempool-stats {
@@ -112,13 +99,11 @@
   box-shadow: none;
 }
 
-.mempool-hero-title,
-[data-theme='dark'] .mempool-hero-title {
+.mempool-hero-title {
   color: var(--text-primary);
 }
 
-.mempool-hero-subtitle,
-[data-theme='dark'] .mempool-hero-subtitle {
+.mempool-hero-subtitle {
   color: var(--text-muted);
 }
 

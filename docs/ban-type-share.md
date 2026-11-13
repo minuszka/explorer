@@ -1,6 +1,6 @@
 # Verified ban share by quorum type
 
-Ban Detection shows Q400_60 (Type 2) and Q60 (Type 7) percentages of **verified attributed ban events**, using the existing canonical PoSe API. Other quorum types remain in the denominator. Membership, invalid-member counts, observer reports and raw ban history are not causal inputs.
+PoSe Watch (`/ban-detection`) shows Q400_60 (Type 2) and Q60 (Type 7) percentages of **verified attributed ban events**, using the existing canonical PoSe API. Other quorum types remain in the denominator. Membership, invalid-member counts, observer reports and raw ban history are not causal inputs.
 
 `GET /api/v1/masternodes/pose-chain` accepts optional `since` (ISO timestamp, not in the future) and `fromHeight` (nonnegative integer). Both are intersected with the requested hours and the collector's confirmed range. The summary and penalty coverage use the same time/height window. The UI sends the selected history start, and the activation height for Since Q60. Pagination does not truncate the quorum summary.
 
