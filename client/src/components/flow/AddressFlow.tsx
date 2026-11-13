@@ -12,11 +12,12 @@ import { fetchAddress, fetchAddressTxs } from '../../services/api';
 import type { TxView } from '../../types/api';
 import { formatCoin, formatNumber } from '../../utils/formatters';
 import StatePanel from '../ui/StatePanel';
-import FlowCard from './FlowCard';
+import AddressTxRow from './AddressTxRow';
 import { getErrorMessage, isNotFoundError, retryFailedRequestOnce } from './flowModel';
 import './flow.css';
 
-const ADDRESS_TX_PAGE_SIZE = 8;
+// One line per transaction, so a page holds more than the old full-size cards did.
+const ADDRESS_TX_PAGE_SIZE = 20;
 
 /**
  * The address page body. Mount it with `key={address}` so a different address starts on page 1
@@ -102,7 +103,7 @@ export default function AddressFlow({ address }: { address: string }) {
       <div className="card searchv2-address-flows">
         <div className="card-header">
           <h2 className="card-title">
-            <HiOutlineArrowsRightLeft /> Transaction Flows
+            <HiOutlineArrowsRightLeft /> Transactions
           </h2>
           {!txsQuery.isPending && !txsError && (
             <span className="searchv2-address-total">
@@ -127,11 +128,11 @@ export default function AddressFlow({ address }: { address: string }) {
 
         {!txsLoading && !txsError && txs.length > 0 && (
           <>
-            <div className="searchv2-flow-listing">
+            <ul className="address-tx-rows">
               {txs.map((tx) => (
-                <FlowCard key={tx.txid} tx={tx} focusAddress={address} />
+                <AddressTxRow key={tx.txid} tx={tx} address={address} />
               ))}
-            </div>
+            </ul>
 
             {pages > 1 && (
               <div className="pagination">

@@ -2,6 +2,7 @@ import { Link, useParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { HiOutlineArrowsRightLeft } from 'react-icons/hi2';
 import { fetchTransaction } from '../services/api';
+import CopyButton from '../components/ui/CopyButton';
 import StatePanel from '../components/ui/StatePanel';
 import TransactionFlow from '../components/flow/TransactionFlow';
 import { getErrorMessage, isNotFoundError, retryFailedRequestOnce } from '../components/flow/flowModel';
@@ -49,7 +50,11 @@ export default function TransactionPage() {
         <h1 className="page-title">
           <HiOutlineArrowsRightLeft /> Transaction
         </h1>
-        <p className="page-subtitle mono" style={{ fontSize: '0.8rem', wordBreak: 'break-all' }}>{txid}</p>
+        <div className="page-subtitle-row">
+          <p className="page-subtitle mono" style={{ fontSize: '0.8rem', wordBreak: 'break-all' }}>{txid}</p>
+          {/* Keyed, so a "Copied" note for one transaction never shows beside the next one. */}
+          <CopyButton key={txid} value={txid} label="transaction ID" />
+        </div>
       </div>
       {/* A new txid gets a fresh view, so the previous transaction never shows under the new address. */}
       <TransactionView key={txid} txid={txid} />

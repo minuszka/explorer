@@ -3,6 +3,7 @@ import { Address } from '../models/Address';
 import { Block } from '../models/Block';
 import { Transaction } from '../models/Transaction';
 import { config } from '../config';
+import { countStakersSince } from './blockRoles.service';
 import { getChainTip } from './chainTip.service';
 import { fetchRawMasternodes } from './masternode.service';
 import { rpcService } from './rpc.service';
@@ -419,11 +420,9 @@ export async function getStatsData(forceRefresh = false): Promise<StatsData> {
     }
 
     try {
-      const minedBy = await Block.distinct('minedBy', {
-        minedBy: { $type: 'string', $ne: '' },
-        time: { $gte: oneDayAgo },
-      });
-      stakingWallets = minedBy.length;
+      // Different addresses that staked a block in the last day, read from each coinstake.
+      // (`minedBy` is the coinbase payee, which in a proof-of-stake block is the masternode.)
+      stakingWallets = await countStakersSince(oneDayAgo);
     } catch {
       // Optional
     }

@@ -83,10 +83,12 @@ describe.skipIf(!baseUri)('address transaction list with disposable MongoDB', ()
     await mongoose.disconnect();
   });
 
-  it('gives each listed transaction the same input total, fee and reward flag as the transaction page', async () => {
+  it('gives each listed transaction the same input total, fee, reward flag and output types as the transaction page', async () => {
     const list = await request(app).get(`/api/address/${STAKER}/txs`).query({ limit: 10 });
     expect(list.status).toBe(200);
     expect(list.body.data.map((tx: { txid: string }) => tx.txid)).toEqual(TXS.map((tx) => tx.txid));
+    const outputTypes = (tx: { vout: Array<{ scriptPubKey?: { type?: string } }> }) =>
+      tx.vout.map((output) => output.scriptPubKey?.type);
 
     for (const listed of list.body.data) {
       const detail = await request(app).get(`/api/tx/${listed.txid}`);
@@ -95,9 +97,14 @@ describe.skipIf(!baseUri)('address transaction list with disposable MongoDB', ()
         expect({ txid: listed.txid, field, value: listed[field] })
           .toEqual({ txid: listed.txid, field, value: detail.body.data[field] });
       }
+      expect({ txid: listed.txid, types: outputTypes(listed) })
+        .toEqual({ txid: listed.txid, types: outputTypes(detail.body.data) });
     }
 
     const [stake, reward, transfer] = list.body.data;
+    // The empty first output of a stake or reward is "nonstandard" on both pages, not unknown.
+    expect(outputTypes(stake)).toEqual(['nonstandard', 'pubkey']);
+    expect(outputTypes(reward)).toEqual(['nonstandard', 'pubkeyhash']);
     expect(stake).toMatchObject({ isCoinbase: false, totalValueIn: 25375, totalValueOut: 25875, fee: 0 });
     expect(reward).toMatchObject({ isCoinbase: true, totalValueIn: 0, totalValueOut: 10000 });
     expect(transfer).toMatchObject({ isCoinbase: false, totalValueIn: 500, feeSat: '10000', fee: 0.0001 });

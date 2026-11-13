@@ -4,6 +4,7 @@ import type { TxView } from '../../types/api';
 import { formatAge, formatBytes, formatCoin, formatDate, formatNumber } from '../../utils/formatters';
 import { blockPath } from '../../utils/routes';
 import FlowCard from './FlowCard';
+import { classifyTransaction } from './flowModel';
 import './flow.css';
 
 /** The transaction page body: summary, every input and output, and the remaining details. */
@@ -11,6 +12,7 @@ export default function TransactionFlow({ tx }: { tx: TxView }) {
   const totalOut = typeof tx.totalValueOut === 'number' ? tx.totalValueOut : 0;
   const totalIn = typeof tx.totalValueIn === 'number' ? tx.totalValueIn : 0;
   const fee = typeof tx.fee === 'number' ? tx.fee : 0;
+  const kind = classifyTransaction(tx);
 
   return (
     <>
@@ -86,14 +88,12 @@ export default function TransactionFlow({ tx }: { tx: TxView }) {
               <div className="detail-value value-highlight">{formatCoin(tx.donationAmount || 0)} DFCN</div>
             </div>
           )}
-          {tx.isCoinbase && (
-            <div className="detail-row">
-              <div className="detail-label">Type</div>
-              <div className="detail-value">
-                <span className="badge">Block Reward (Coinbase)</span>
-              </div>
+          <div className="detail-row">
+            <div className="detail-label">Type</div>
+            <div className="detail-value">
+              <span className={`badge ${kind.tone !== 'neutral' ? kind.tone : ''}`}>{kind.label}</span>
             </div>
-          )}
+          </div>
         </div>
       </div>
     </>

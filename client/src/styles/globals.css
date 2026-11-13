@@ -80,16 +80,20 @@ pre,
 }
 
 /* Layout */
+/* 1240 px of content plus the 32 px side gutter on both sides. The gutter narrows on smaller
+   screens (below) but never disappears. */
 .container {
   width: 100%;
-  max-width: 1240px;
+  max-width: 1304px;
   margin: 0 auto;
   padding: 0 32px;
 }
 
+/* Vertical padding only: the main element is also a .container, and its side gutter must stay. */
 .page {
   min-height: calc(100vh - 164px);
-  padding: 24px 0 32px;
+  padding-top: 24px;
+  padding-bottom: 32px;
 }
 
 .app-main {
@@ -660,7 +664,8 @@ textarea::placeholder {
   }
 
   .page {
-    padding: 18px 0 24px;
+    padding-top: 18px;
+    padding-bottom: 24px;
   }
 
   .grid-2,

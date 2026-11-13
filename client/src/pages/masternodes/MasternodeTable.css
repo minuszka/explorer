@@ -1,0 +1,229 @@
+/* The masternode table: no inner scroll box; the header sticks below the site header. */
+
+.mn-table-card {
+  scroll-margin-top: var(--mn-sticky-top, 0px);
+}
+
+.mn-table-card .mn-panel-metric {
+  white-space: nowrap;
+}
+
+/* A version typed into the address can be long and unbroken: let it wrap inside the card. */
+.mn-version-badge {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.mn-table-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 0.75rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.mn-table-note {
+  margin: 0 0 0.75rem;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+}
+
+.mn-table-wrap {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.mn-table {
+  width: 100%;
+}
+
+.mn-table thead th {
+  position: sticky;
+  top: var(--mn-sticky-top, 0px);
+  z-index: 2;
+  background: var(--surface-muted);
+  /* With collapsed borders the cell's own bottom border does not stick with it. */
+  box-shadow: inset 0 -1px 0 var(--border);
+}
+
+.mn-table thead th:first-child {
+  border-top-left-radius: 12px;
+}
+
+.mn-table thead th:last-child {
+  border-top-right-radius: 12px;
+}
+
+.mn-table tbody tr:last-child td {
+  border-bottom: 0;
+}
+
+.mn-table td {
+  overflow-wrap: anywhere;
+}
+
+.mn-table .mn-col-service .mono {
+  white-space: nowrap;
+}
+
+.mn-country-code {
+  margin-left: 0.45rem;
+  font-size: 0.76rem;
+}
+
+.mn-source-tag {
+  display: inline-flex;
+  margin-left: 0.45rem;
+  padding: 0.05rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  vertical-align: middle;
+}
+
+.mn-source-tag.tagged {
+  border-color: rgba(43, 196, 138, 0.42);
+  color: var(--success);
+}
+
+.mn-version-stale {
+  margin-left: 0.4rem;
+  color: var(--warning, var(--text-muted));
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+/*
+ * Phones and narrow tablets: each row is a card; the header becomes a wrapping row of sort buttons.
+ * The six columns need about 730 px, and the card is about 90 px narrower than the window, so the
+ * table only starts above 900 px, where it has room to spare.
+ */
+@media (max-width: 900px) {
+  .mn-table-controls {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .mn-table-wrap {
+    border: 0;
+    background: transparent;
+  }
+
+  .mn-table,
+  .mn-table thead {
+    display: block;
+    background: transparent;
+  }
+
+  .mn-table thead tr {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.35rem 0.9rem;
+    padding: 0.6rem 0.75rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface-muted);
+  }
+
+  .mn-table thead th {
+    display: block;
+    position: static;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .mn-table tbody {
+    display: flex;
+    flex-direction: column;
+    gap: 0.55rem;
+    margin-top: 0.55rem;
+  }
+
+  .mn-table tbody tr {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.3rem 0.8rem;
+    padding: 0.7rem 0.8rem;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  .mn-table td {
+    display: inline-flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    padding: 0;
+    border: 0;
+    font-size: 0.82rem;
+  }
+
+  .mn-table td.mn-col-service {
+    flex: 1 1 60%;
+    min-width: 0;
+  }
+
+  .mn-table .mn-col-service .mono {
+    white-space: normal;
+  }
+
+  .mn-table td.mn-col-status {
+    flex: 0 0 auto;
+  }
+
+  .mn-table td.mn-col-version,
+  .mn-table td.mn-col-country,
+  .mn-table td.mn-col-provider,
+  .mn-table td.mn-col-payout {
+    color: var(--text-muted);
+  }
+
+  /* The version starts the second line; the break is a zero-height, full-width pseudo-element. */
+  .mn-table td.mn-col-version {
+    order: 3;
+  }
+
+  .mn-table tbody tr::after {
+    content: '';
+    flex-basis: 100%;
+    height: 0;
+    order: 2;
+  }
+
+  .mn-table td.mn-col-service {
+    order: 0;
+  }
+
+  .mn-table td.mn-col-status {
+    order: 1;
+  }
+
+  .mn-table td.mn-col-country {
+    order: 4;
+  }
+
+  .mn-table td.mn-col-provider {
+    order: 5;
+  }
+
+  .mn-table td.mn-col-payout {
+    order: 6;
+  }
+
+  .mn-table td[data-label]::before {
+    content: attr(data-label) ' ';
+    margin-right: 0.25rem;
+    color: var(--text-muted);
+    font-size: 0.68rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+  }
+}

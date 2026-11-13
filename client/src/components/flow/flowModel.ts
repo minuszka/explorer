@@ -26,14 +26,6 @@ export interface FlowEntry {
   isFocus: boolean;
 }
 
-export interface DirectionSummary {
-  label: string;
-  tone: 'success' | 'warning' | 'error' | 'neutral';
-  sent: number;
-  received: number;
-  net: number;
-}
-
 type RuntimeVin = {
   address?: unknown;
   coinbase?: unknown;
@@ -170,53 +162,83 @@ export function buildOutputEntries(tx: TxView, focusAddress?: string): FlowEntry
   });
 }
 
-export function getDirectionSummary(tx: TxView, focusAddress?: string): DirectionSummary {
-  if (!focusAddress) {
-    return {
-      label: tx.isCoinbase ? 'Block Reward' : 'Transfer',
-      tone: tx.isCoinbase ? 'success' : 'neutral',
-      sent: 0,
-      received: 0,
-      net: 0,
-    };
-  }
+export type TxKind = 'reward' | 'stake' | 'protocol' | 'transfer';
+export type TxTone = 'success' | 'warning' | 'error' | 'neutral';
 
-  const sent = getVinList(tx).reduce((sum, vin) => {
-    if (vin.address !== focusAddress) return sum;
-    return sum + toAmount(vin.value);
-  }, 0);
+export interface TxClassification {
+  kind: TxKind;
+  /** The one label both the transaction page and an address page show for this transaction. */
+  label: string;
+  tone: TxTone;
+  /** Only with an address: what that address put in and got back, and the difference. */
+  sent: number;
+  received: number;
+  net: number;
+}
 
-  const received = getVoutList(tx).reduce((sum, vout) => {
-    const addresses = getVoutAddresses(vout);
-    if (!addresses.includes(focusAddress)) return sum;
-    return sum + toAmount(vout.value);
-  }, 0);
+function isCoinbaseTx(tx: TxView): boolean {
+  return tx.isCoinbase === true || getVinList(tx).some((vin) => Boolean(vin.coinbase));
+}
 
+/**
+ * A proof-of-stake transaction spends coins from an address and starts with an empty, zero-value
+ * output that has no address and the `nonstandard` type. A block reward has the same empty first
+ * output but spends nothing. A null-data output (`nulldata`) is not that marker, and an output whose
+ * type is unknown proves nothing, so without it the transaction stays a transfer.
+ */
+function isStakeTx(tx: TxView): boolean {
+  const vin = getVinList(tx);
+  const vout = getVoutList(tx);
+  const spendsFromAddress = vin.some((input) => typeof input.address === 'string' && input.address.length > 0);
+  if (!spendsFromAddress || vout.length < 2) return false;
+  const marker = vout[0];
+  const type = getVoutScriptType(marker);
+  return toAmount(marker.value) === 0 && getVoutAddresses(marker).length === 0 && type === 'nonstandard';
+}
+
+/** No inputs and no outputs at all: a special transaction the chain itself carries (for example a quorum commitment). */
+function isProtocolTx(tx: TxView): boolean {
+  const vin = (tx as { vin?: unknown }).vin;
+  const vout = (tx as { vout?: unknown }).vout;
+  return Array.isArray(vin) && vin.length === 0 && Array.isArray(vout) && vout.length === 0;
+}
+
+const KIND_LABEL: Record<Exclude<TxKind, 'transfer'>, { label: string; tone: TxTone }> = {
+  reward: { label: 'Reward', tone: 'success' },
+  stake: { label: 'Stake', tone: 'success' },
+  protocol: { label: 'Protocol', tone: 'neutral' },
+};
+
+/**
+ * Sorts a transaction into reward, stake, protocol or transfer from its own fields only, and, for a
+ * transfer seen from an address, into received, sent or self. Anything it cannot place stays "Transfer".
+ */
+export function classifyTransaction(tx: TxView, focusAddress?: string): TxClassification {
+  const sent = focusAddress
+    ? getVinList(tx).reduce((sum, vin) => (vin.address === focusAddress ? sum + toAmount(vin.value) : sum), 0)
+    : 0;
+  const received = focusAddress
+    ? getVoutList(tx).reduce((sum, vout) => (getVoutAddresses(vout).includes(focusAddress) ? sum + toAmount(vout.value) : sum), 0)
+    : 0;
   const net = received - sent;
+  const amounts = { sent, received, net };
 
-  if (sent > NET_TOLERANCE && received > NET_TOLERANCE) {
-    if (net > NET_TOLERANCE) {
-      return { label: 'Self / Stake In', tone: 'success', sent, received, net };
-    }
-    if (net < -NET_TOLERANCE) {
-      return { label: 'Self / Change Out', tone: 'warning', sent, received, net };
-    }
-    return { label: 'Self Transfer', tone: 'warning', sent, received, net };
-  }
+  const kind: TxKind = isCoinbaseTx(tx) ? 'reward' : isStakeTx(tx) ? 'stake' : isProtocolTx(tx) ? 'protocol' : 'transfer';
+  if (kind !== 'transfer') return { kind, ...KIND_LABEL[kind], ...amounts };
+  if (!focusAddress) return { kind, label: 'Transfer', tone: 'neutral', ...amounts };
 
-  if (received > NET_TOLERANCE) {
-    return { label: 'Received', tone: 'success', sent, received, net };
-  }
-
-  if (sent > NET_TOLERANCE) {
-    return { label: 'Sent', tone: 'error', sent, received, net };
-  }
-
-  return {
-    label: tx.isCoinbase ? 'Reward' : 'Observed',
-    tone: tx.isCoinbase ? 'success' : 'neutral',
-    sent,
-    received,
-    net,
-  };
+  const didSend = sent > NET_TOLERANCE;
+  const didReceive = received > NET_TOLERANCE;
+  // Every output that carries value goes to this address alone: nothing left it except the fee.
+  // Only an output worth exactly nothing (a stake marker, an OP_RETURN note) may go elsewhere; even
+  // one satoshi to an output without an address, or to one shared with another address, is not that.
+  const onlyToSelf = getVoutList(tx).every((vout) => {
+    if (vout.value != null && toAmount(vout.value) === 0) return true;
+    const addresses = getVoutAddresses(vout);
+    return addresses.length === 1 && addresses[0] === focusAddress;
+  });
+  if (didSend && didReceive && onlyToSelf) return { kind, label: 'Self', tone: 'warning', ...amounts };
+  if (didSend && net < -NET_TOLERANCE) return { kind, label: 'Sent', tone: 'error', ...amounts };
+  if (didReceive && net > NET_TOLERANCE) return { kind, label: 'Received', tone: 'success', ...amounts };
+  return { kind, label: 'Transfer', tone: 'neutral', ...amounts };
 }

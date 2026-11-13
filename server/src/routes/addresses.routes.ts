@@ -14,8 +14,8 @@ import {
 
 const router = Router();
 
-// The address page shows each transaction's input total, fee and reward label from this list,
-// so the projection must keep the same stored totals that /api/tx/:txid returns.
+// The address page shows each transaction's input total, fee, reward label and output types from
+// this list, so the projection must keep the same stored fields that /api/tx/:txid returns.
 const ADDRESS_TX_LIST_PROJECTION = {
   txid: 1,
   blockheight: 1,
@@ -27,6 +27,7 @@ const ADDRESS_TX_LIST_PROJECTION = {
   'vin.address': 1,
   'vin.valueSat': 1,
   'vout.valueSat': 1,
+  'vout.scriptPubKey.type': 1,
   'vout.scriptPubKey.addresses': { $slice: 1 },
 };
 let involvedAddressFieldDetected: boolean | null = null;

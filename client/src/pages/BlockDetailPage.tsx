@@ -9,8 +9,10 @@ import {
   HiOutlineArrowTrendingUp,
 } from 'react-icons/hi2';
 import { fetchBlock, fetchBlockTxs } from '../services/api';
+import BlockRoleRows from '../components/BlockRoleRows';
 import { formatNumber, truncateHash, formatAge, formatDate, formatBytes, formatCoin } from '../utils/formatters';
 import { blockPath, txPath } from '../utils/routes';
+import CopyButton from '../components/ui/CopyButton';
 import './PageStyles.css';
 
 export default function BlockDetailPage() {
@@ -61,19 +63,24 @@ function BlockDetailView({ hashOrHeight }: { hashOrHeight: string | undefined })
 
   return (
     <div className="fade-in">
-      <div className="block-nav">
-        {block.height > 0 && (
-          <Link to={blockPath(block.height - 1)} className="btn btn-sm btn-secondary">
-            <HiOutlineChevronLeft /> Block #{formatNumber(block.height - 1)}
-          </Link>
-        )}
-        <h1 className="page-title" style={{ margin: 0 }}>
+      {/* The title starts at the left edge, as on every other page; the neighbouring blocks follow it. */}
+      <div className="page-header block-header">
+        <h1 className="page-title">
           <HiOutlineCube /> Block #{formatNumber(block.height)}
         </h1>
-        {block.nextblockhash && (
-          <Link to={blockPath(block.height + 1)} className="btn btn-sm btn-secondary">
-            Block #{formatNumber(block.height + 1)} <HiOutlineChevronRight />
-          </Link>
+        {(block.height > 0 || block.nextblockhash) && (
+          <nav className="block-nav" aria-label="Neighbouring blocks">
+            {block.height > 0 && (
+              <Link to={blockPath(block.height - 1)} className="btn btn-sm btn-secondary">
+                <HiOutlineChevronLeft /> Block #{formatNumber(block.height - 1)}
+              </Link>
+            )}
+            {block.nextblockhash && (
+              <Link to={blockPath(block.height + 1)} className="btn btn-sm btn-secondary">
+                Block #{formatNumber(block.height + 1)} <HiOutlineChevronRight />
+              </Link>
+            )}
+          </nav>
         )}
       </div>
 
@@ -85,12 +92,16 @@ function BlockDetailView({ hashOrHeight }: { hashOrHeight: string | undefined })
         <div className="detail-grid">
           <div className="detail-row">
             <div className="detail-label">Hash</div>
-            <div className="detail-value">{block.hash}</div>
+            <div className="detail-value detail-value-copy">
+              <span className="detail-value-id">{block.hash}</span>
+              <CopyButton value={block.hash} label="block hash" />
+            </div>
           </div>
           <div className="detail-row">
             <div className="detail-label"><HiOutlineClock /> Timestamp</div>
             <div className="detail-value">{formatDate(block.time)} ({formatAge(block.time)})</div>
           </div>
+          <BlockRoleRows block={block} />
           <div className="detail-row">
             <div className="detail-label">Height</div>
             <div className="detail-value">{formatNumber(block.height)}</div>

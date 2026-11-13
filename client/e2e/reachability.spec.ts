@@ -46,13 +46,17 @@ test('all returned endpoints can be reached with manual pagination @smoke', asyn
   await page.goto('/chain-health');
   const panel = page.locator('.dns-seeder-card');
   await expect(panel.locator('tbody tr')).toHaveCount(25);
-  await expect(panel.getByText('Page 1 of 6 · 126 endpoints', { exact: true })).toBeVisible();
-  for (let i = 0; i < 5; i++) await panel.getByRole('button', { name: 'Next endpoints' }).click();
+  const pager = panel.getByRole('navigation', { name: 'DNS seeder pages' });
+  await expect(pager.getByText('Page 1 of 6', { exact: true })).toBeVisible();
+  await expect(panel.getByText('126 endpoints', { exact: true })).toBeVisible();
+  for (let i = 0; i < 5; i++) await pager.getByRole('button', { name: 'Next page' }).click();
   await expect(panel.locator('tbody tr')).toHaveCount(1);
   await expect(panel.locator('tbody')).toContainText('198.51.100.126');
-  await expect(panel.getByRole('button', { name: 'Next endpoints' })).toBeDisabled();
-  await panel.getByRole('button', { name: 'Previous endpoints' }).click();
-  await expect(panel.getByText('Page 5 of 6 · 126 endpoints', { exact: true })).toBeVisible();
+  await expect(pager.getByRole('button', { name: 'Next page' })).toBeDisabled();
+  await pager.getByRole('button', { name: 'Previous page' }).click();
+  await expect(pager.getByText('Page 5 of 6', { exact: true })).toBeVisible();
+  await pager.getByRole('button', { name: 'First page' }).click();
+  await expect(pager.getByText('Page 1 of 6', { exact: true })).toBeVisible();
 });
 
 test('stale feed and unavailable daemon remain neutral and expose their limits @smoke', async ({ page }) => {

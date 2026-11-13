@@ -1,3 +1,9 @@
+/** Who made a block: the staker of a proof-of-stake block, or the miner of a premine block. */
+export interface BlockProducer {
+  address: string;
+  kind: 'staker' | 'miner';
+}
+
 export interface IBlock {
   hash: string;
   height: number;
@@ -14,7 +20,12 @@ export interface IBlock {
   nTx: number;
   previousblockhash?: string;
   nextblockhash?: string;
+  /** The first address the coinbase pays: the masternode in a proof-of-stake block, not its producer. */
   minedBy?: string;
+  /** Block detail only: the producer read from the coinstake (or a premine coinbase); null when unknown. */
+  producer?: BlockProducer | null;
+  /** Block detail only: the one address the coinbase of a proof-of-stake block pays; null when unknown. */
+  masternodePayee?: string | null;
   rewardSat: number | string;
   totalValueOutSat: number | string;
   txids: string[];

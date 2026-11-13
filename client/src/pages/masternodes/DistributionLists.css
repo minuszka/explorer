@@ -1,0 +1,118 @@
+/* Ranked bar lists for the Masternodes page: countries and hosting providers. The lists carry
+   role="list" because Safari drops list semantics from lists with list-style: none. */
+
+.mn-rank-list {
+  display: grid;
+  gap: 0.4rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.mn-rank-row {
+  display: grid;
+  gap: 0.4rem;
+  width: 100%;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border-soft, var(--border));
+  border-radius: 10px;
+  background: var(--surface-muted);
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.mn-rank-row:hover,
+.mn-rank-row.active {
+  border-color: var(--accent);
+}
+
+.mn-rank-row.active {
+  background: var(--accent-soft, var(--surface-muted));
+}
+
+.mn-rank-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.mn-rank-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-size: 0.86rem;
+  font-weight: 600;
+}
+
+.mn-rank-value {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  flex-shrink: 0;
+  font-size: 0.82rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.mn-rank-track {
+  display: block;
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--border-soft, var(--border));
+}
+
+.mn-rank-fill,
+.mn-rank-stack {
+  display: block;
+  height: 100%;
+}
+
+.mn-rank-stack {
+  display: flex;
+}
+
+.mn-rank-fill {
+  background: var(--accent);
+}
+
+.mn-rank-fill.auto {
+  background: #2f8fff;
+}
+
+.mn-rank-fill.tagged {
+  background: #2bc48a;
+}
+
+.mn-rank-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1rem;
+  margin: 0 0 0.75rem;
+  padding: 0;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  list-style: none;
+}
+
+.mn-rank-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.mn-rank-swatch {
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+}
+
+.mn-rank-swatch.auto {
+  background: #2f8fff;
+}
+
+.mn-rank-swatch.tagged {
+  background: #2bc48a;
+}

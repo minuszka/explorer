@@ -38,7 +38,8 @@ describe.skipIf(!uri)('Network noise receipt retention with disposable MongoDB',
     if (!uri || !/^mongodb:\/\/127\.0\.0\.1:\d+\/deftrack_pose_test_[a-f0-9]+$/.test(uri)) {
       throw new Error('TEST_POSE_MONGO_URI must name an isolated localhost test database');
     }
-    await mongoose.connect(uri, { serverSelectionTimeoutMS: 5000 });
+    // Own database: the telemetry suite clears the same collections and may run at the same time.
+    await mongoose.connect(`${uri}de`, { serverSelectionTimeoutMS: 5000 });
     await Promise.all([PoseObservation.init(), NetworkNoiseNodeState.init(), NetworkNoiseObservation.init(),
       NetworkNoiseBaseline.init(), NetworkNoiseBatch.init()]);
   });

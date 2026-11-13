@@ -30,29 +30,29 @@ test('last-known version shares include older observations and keep direct peers
   await stubApi(page, { [path]: { success: true, data: fixture() }, '/api/network': network });
   await page.goto('/network');
   await expect(page.getByRole('heading', { name: 'Active Masternode Versions' })).toBeVisible();
-  await expect(page.getByText('PoSe penalty · active')).toBeVisible();
   await expect(page.locator('.network-version-row')).toHaveCount(3);
   await expect(page.locator('.network-version-row').first()).toContainText('50.0% of active');
   await expect(page.locator('.network-version-summary')).toContainText('2 (50.0%)');
   await expect(page.getByRole('button', { name: /Stale version/ })).toHaveCount(0);
-  await expect(page.locator('tbody tr')).toHaveCount(4);
+  // The masternodes themselves are listed once, on the Masternodes page: no table here.
+  await expect(page.locator('tbody tr')).toHaveCount(0);
+  await expect(page.getByRole('link', { name: 'Open the Masternodes table' })).toHaveAttribute('href', '/masternodes');
   await expect(page.getByText('Page refresh: 30s.', { exact: false })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath('network.png'), fullPage: true });
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
-  await page.locator('.network-version-row').first().click();
-  await expect(page.locator('tbody tr')).toHaveCount(2);
-  await expect(page.locator('tbody')).toContainText('198.51.100.1');
-  await expect(page.locator('tbody')).toContainText('198.51.100.3');
-  await expect(page.locator('tbody')).toContainText('Older / undated');
-  await page.getByRole('button', { name: /Unknown version/ }).click();
-  await expect(page.locator('tbody tr')).toHaveCount(1);
-  await expect(page.locator('tbody')).toContainText('198.51.100.4');
-  await page.getByRole('button', { name: 'Clear version filter' }).click();
-  await expect(page.locator('tbody tr')).toHaveCount(4);
+  // Each version row opens the Masternodes table filtered to that version.
+  await expect(page.locator('.network-version-row').first()).toHaveAttribute('href', '/masternodes?version=23.0.0');
+  await expect(page.getByRole('link', { name: /Unknown version/ })).toHaveAttribute('href', '/masternodes?version=unknown');
+
+  // Direct peers are still filtered in place.
   await page.getByRole('button', { name: 'Direct peers', exact: true }).click();
   await expect(page.getByRole('heading', { name: 'Direct Peer Versions' })).toBeVisible();
   await expect(page.locator('.network-version-row').first()).toContainText('100.0% of peers');
+  await expect(page.locator('tbody tr')).toHaveCount(1);
+  await page.locator('.network-version-row').first().click();
+  await expect(page.getByRole('button', { name: 'Clear version filter' })).toBeVisible();
+  await expect(page.locator('tbody tr')).toHaveCount(1);
   await expect(page.getByText('Version collection:', { exact: false })).toHaveCount(0);
 });
 
@@ -61,6 +61,8 @@ test('unavailable data remains visible even without any peers @smoke', async ({ 
   await page.goto('/network');
   await expect(page.getByText('Active masternode data is unavailable.', { exact: false })).toBeVisible();
   await expect(page.locator('.network-version-row')).toHaveCount(0);
+  // The way to the masternode list stays, even without the version summary.
+  await expect(page.getByRole('link', { name: 'Open the Masternodes table' })).toHaveAttribute('href', '/masternodes');
 });
 
 test('a valid snapshot with zero active MNs has a clear empty state @smoke', async ({ page }) => {

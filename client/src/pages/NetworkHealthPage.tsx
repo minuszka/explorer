@@ -6,6 +6,7 @@ import { fetchDnsSeederNodes, fetchPreReleaseNodes, fetchSeedNodes } from '../se
 import type { DnsSeederNodeView, PreReleaseNodeView, SeedChainStatus, SeedNodeStatus } from '../types/api';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { formatNumber, formatUtcTime } from '../utils/formatters';
+import Pager from '../components/ui/Pager';
 import './PageStyles.css';
 
 function formatAge(ms: number): string {
@@ -611,11 +612,12 @@ export default function NetworkHealthPage() {
                   ? 'DNS seeder feed is disabled.' : 'No DNS seeder records are available.'}</p>
               </div>
             )}
-            {dnsSeederAllRows.length > 0 && <nav aria-label="DNS seeder pages" style={{ padding: '1rem', display: 'flex', alignItems: 'center', gap: '1rem', flexWrap: 'wrap' }}>
-              <button type="button" onClick={() => setDnsSeederPage(currentDnsSeederPage - 1)} disabled={currentDnsSeederPage === 1}>Previous endpoints</button>
-              <span>Page {currentDnsSeederPage} of {dnsSeederPages} · {dnsSeederAllRows.length} endpoints</span>
-              <button type="button" onClick={() => setDnsSeederPage(currentDnsSeederPage + 1)} disabled={currentDnsSeederPage === dnsSeederPages}>Next endpoints</button>
-            </nav>}
+            {dnsSeederAllRows.length > 0 && (
+              <div className="dns-seeder-pager">
+                <Pager page={currentDnsSeederPage} pages={dnsSeederPages} onPage={setDnsSeederPage} label="DNS seeder pages" />
+                <p className="text-muted dns-seeder-count">{formatNumber(dnsSeederAllRows.length)} endpoints</p>
+              </div>
+            )}
           </div>
       </>
 

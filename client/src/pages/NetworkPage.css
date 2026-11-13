@@ -91,6 +91,12 @@
   background: var(--accent-soft);
 }
 
+/* Active-masternode rows are links into the Masternodes table; they keep the row's text colour. */
+a.network-version-row,
+a.network-version-row:hover {
+  color: var(--text);
+}
+
 .network-version-row.unknown {
   opacity: 0.82;
 }
@@ -216,6 +222,10 @@
   margin-top: 0.85rem;
 }
 
+.network-table-link {
+  margin: 0.85rem 0 0;
+}
+
 .network-version-placeholder,
 .network-table-placeholder {
   padding: 2.5rem;
@@ -224,27 +234,11 @@
 }
 
 .network-table-actions,
-.network-source-list,
 .network-country-cell {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.45rem;
-}
-
-.network-pagination {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  padding: 1rem 0.25rem 0;
-  color: var(--text-muted);
-  font-size: 0.8rem;
-}
-
-.network-pagination > div {
-  display: flex;
-  gap: 0.5rem;
 }
 
 .network-peer-address,
@@ -276,11 +270,6 @@
   }
 
   .network-version-row-head {
-    align-items: flex-start;
-    flex-direction: column;
-  }
-
-  .network-pagination {
     align-items: flex-start;
     flex-direction: column;
   }

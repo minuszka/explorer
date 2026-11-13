@@ -278,30 +278,6 @@
   flex-wrap: wrap;
 }
 
-.mn-active-table-wrapper {
-  max-height: 640px;
-  overflow: auto;
-}
-
-.mn-active-table-wrapper th {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: var(--surface-muted);
-}
-
-.mn-service-cell {
-  max-width: 260px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mn-country-code {
-  margin-left: 0.45rem;
-  font-size: 0.76rem;
-}
-
 .mn-analytics-chip-row {
   margin-bottom: 0.85rem;
   display: flex;

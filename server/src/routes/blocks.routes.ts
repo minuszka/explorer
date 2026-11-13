@@ -3,6 +3,7 @@ import { Block } from '../models/Block';
 import { Transaction } from '../models/Transaction';
 import { config } from '../config';
 import { getChainTip } from '../services/chainTip.service';
+import { loadBlockRoles } from '../services/blockRoles.service';
 import { withCachePolicy } from '../middleware/cachePolicy';
 import { normalizeBlockAmounts, normalizeTransactionAmounts } from '../utils/amounts';
 import {
@@ -346,9 +347,12 @@ router.get('/:hashOrHeight', withCachePolicy('short'), async (req: Request, res:
       }
 
       const bestHeight = tip.height;
+      // Who staked (or mined) the block and which masternode it paid; null where the chain data
+      // does not show it. `minedBy` stays as stored: the first address the coinbase pays.
+      const roles = await loadBlockRoles(block.txids);
       const payload = {
         success: true as const,
-        data: withBlockConfirmations(normalizeBlockAmounts(block), bestHeight),
+        data: { ...withBlockConfirmations(normalizeBlockAmounts(block), bestHeight), ...roles },
       };
       setLruCached(blockSummaryCache, normalizedKey, payload, BLOCK_SUMMARY_CACHE_LIMIT);
       return payload;

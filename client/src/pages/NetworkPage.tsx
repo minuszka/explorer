@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import {
   HiOutlineGlobeAlt,
   HiOutlineSignal,
@@ -22,7 +23,6 @@ interface VersionDatum {
 }
 
 const versionColors = ['#1f64d8', '#2f8fff', '#58a8ff', '#4f7fd8', '#5cbfff', '#3f6fc6'];
-const OBSERVED_PAGE_SIZE = 50;
 
 type VersionScope = 'inventory' | 'direct';
 type PeerSyncState = 'in-sync' | 'minor-lag' | 'behind' | 'ahead' | 'unavailable';
@@ -53,8 +53,9 @@ function formatObservedAge(value: string | null | undefined, nowMs = Date.now())
   return `${Math.floor(seconds / 86_400)}d ago`;
 }
 
-function sourceLabel(source: string): string {
-  return source.replace(/_/g, ' ').replace(/\b\w/g, (letter: string) => letter.toUpperCase());
+/** The Masternodes table filtered to one version; the unknown row shows nodes without a reported version. */
+function masternodesWithVersion(entry: VersionDatum): string {
+  return `/masternodes?version=${encodeURIComponent(entry.isUnknown ? 'unknown' : entry.name)}`;
 }
 
 function getPeerReportedHeight(peer: NetworkView['peers'][number]): number | null {
@@ -95,7 +96,6 @@ export default function NetworkPage() {
   const isPageVisible = usePageVisibility();
   const [selectedVersion, setSelectedVersion] = useState<string | null>(null);
   const [versionScope, setVersionScope] = useState<VersionScope>('inventory');
-  const [observedPage, setObservedPage] = useState(0);
   const [nowMs, setNowMs] = useState(Date.now);
   useEffect(() => {
     if (!isPageVisible) return;
@@ -174,28 +174,13 @@ export default function NetworkPage() {
     return peers.filter((peer) => (peer.subver || 'Unknown') === selectedVersion);
   }, [peers, selectedVersion, versionScope]);
 
-  const observedNodes = useMemo(() => {
-    const nodes = versionSample?.nodes || [];
-    if (selectedVersion === 'Unknown version') return nodes.filter((node) => node.versionState === 'unknown');
-    return selectedVersion ? nodes.filter((node) => node.walletVersion === selectedVersion) : nodes;
-  }, [selectedVersion, versionSample?.nodes]);
-
-  const observedPageCount = Math.max(1, Math.ceil(observedNodes.length / OBSERVED_PAGE_SIZE));
-  const safeObservedPage = Math.min(observedPage, observedPageCount - 1);
-  const pagedObservedNodes = observedNodes.slice(
-    safeObservedPage * OBSERVED_PAGE_SIZE,
-    (safeObservedPage + 1) * OBSERVED_PAGE_SIZE,
-  );
-
   const toggleVersionFilter = (version: string) => {
     setSelectedVersion((current) => (current === version ? null : version));
-    setObservedPage(0);
   };
 
   const changeVersionScope = (scope: VersionScope) => {
     setVersionScope(scope);
     setSelectedVersion(null);
-    setObservedPage(0);
   };
 
   const clearPeerFilters = () => {
@@ -322,31 +307,49 @@ export default function NetworkPage() {
               </div>
             ) : (
               <div className="network-version-list">
-                {versionData.map((entry) => (
-                  <button
-                    key={entry.name}
-                    type="button"
-                    className={`network-version-row ${entry.isUnknown ? 'unknown' : ''} ${selectedVersion === entry.name ? 'active' : ''}`}
-                    onClick={() => toggleVersionFilter(entry.name)}
-                    title={`${entry.sharePct.toFixed(1)}% of ${versionScope === 'inventory' ? 'all active masternodes' : 'direct peers'}. Click to filter.`}
-                    aria-pressed={selectedVersion === entry.name}
-                  >
-                    <span className="network-version-row-head">
-                      <span className="mono">{entry.name}</span>
-                      <span>
-                        {entry.isDeprecated && <span className="badge warning">Legacy</span>}
-                        <strong>{formatNumber(entry.value)}</strong>
-                        <span className="text-muted">{entry.sharePct.toFixed(1)}% {versionScope === 'inventory' ? 'of active' : 'of peers'}</span>
+                {versionData.map((entry) => {
+                  const rowContent = (
+                    <>
+                      <span className="network-version-row-head">
+                        <span className="mono">{entry.name}</span>
+                        <span>
+                          {entry.isDeprecated && <span className="badge warning">Legacy</span>}
+                          <strong>{formatNumber(entry.value)}</strong>
+                          <span className="text-muted">{entry.sharePct.toFixed(1)}% {versionScope === 'inventory' ? 'of active' : 'of peers'}</span>
+                        </span>
                       </span>
-                    </span>
-                    <span className="network-version-track" aria-hidden="true">
-                      <span
-                        className={entry.isDeprecated ? 'network-version-fill deprecated' : 'network-version-fill'}
-                        style={{ width: `${entry.sharePct}%`, background: entry.color }}
-                      />
-                    </span>
-                  </button>
-                ))}
+                      <span className="network-version-track" aria-hidden="true">
+                        <span
+                          className={entry.isDeprecated ? 'network-version-fill deprecated' : 'network-version-fill'}
+                          style={{ width: `${entry.sharePct}%`, background: entry.color }}
+                        />
+                      </span>
+                    </>
+                  );
+                  // Active masternodes open in the Masternodes table, filtered to the version;
+                  // direct peers are filtered in place, in the peer table below.
+                  return versionScope === 'inventory' ? (
+                    <Link
+                      key={entry.name}
+                      to={masternodesWithVersion(entry)}
+                      className={`network-version-row ${entry.isUnknown ? 'unknown' : ''}`}
+                      title={`${entry.sharePct.toFixed(1)}% of all active masternodes. Open them in the Masternodes table.`}
+                    >
+                      {rowContent}
+                    </Link>
+                  ) : (
+                    <button
+                      key={entry.name}
+                      type="button"
+                      className={`network-version-row ${entry.isUnknown ? 'unknown' : ''} ${selectedVersion === entry.name ? 'active' : ''}`}
+                      onClick={() => toggleVersionFilter(entry.name)}
+                      title={`${entry.sharePct.toFixed(1)}% of direct peers. Click to filter.`}
+                      aria-pressed={selectedVersion === entry.name}
+                    >
+                      {rowContent}
+                    </button>
+                  );
+                })}
               </div>
             )}
             {versionScope === 'inventory' && versionSample && (
@@ -364,6 +367,14 @@ export default function NetworkPage() {
                   {versionSampleQuery.isFetching && ' Refreshing…'}
                 </p>
               </div>
+            )}
+            {/* The masternodes themselves are listed on the Masternodes page, also when this summary fails. */}
+            {versionScope === 'inventory' && (
+              <p className="network-table-link">
+                <Link to="/masternodes" className="btn btn-sm btn-secondary">
+                  Open the Masternodes table
+                </Link>
+              </p>
             )}
             {selectedVersion && (
               <button type="button" className="btn btn-sm btn-secondary network-clear-filter" onClick={() => toggleVersionFilter(selectedVersion)}>
@@ -414,89 +425,7 @@ export default function NetworkPage() {
           </div>
       </div>
 
-      {versionScope === 'inventory' ? (
-        <div className="card">
-          <div className="card-header">
-            <div>
-              <h2 className="card-title"><HiOutlineServerStack /> Active Masternodes</h2>
-              <p className="network-card-subtitle">Last reported version per active masternode. Older observations are included in their version totals.</p>
-            </div>
-            <div className="network-table-actions">
-              {selectedVersion && <span className="badge badge-accent">Version: {selectedVersion}</span>}
-              <span className="badge">{formatNumber(observedNodes.length)} active masternodes</span>
-            </div>
-          </div>
-          {versionSampleQuery.isLoading ? (
-            <div className="network-table-placeholder">Loading active masternodes...</div>
-          ) : versionSampleQuery.isError ? (
-            <div className="network-table-placeholder">Network inventory is temporarily unavailable.</div>
-          ) : observedNodes.length === 0 ? (
-            <div className="network-table-placeholder">No active masternodes match the selected filter.</div>
-          ) : (
-            <>
-              <div className="table-wrapper">
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Node</th>
-                      <th>Status</th>
-                      <th>Version</th>
-                      <th>Version quality</th>
-                      <th>Inventory sources</th>
-                      <th>Version reported</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {pagedObservedNodes.map((node) => (
-                      <tr key={node.id}>
-                        <td className="mono" title={node.id}>{node.ip ? `${node.ip.includes(':') ? `[${node.ip}]` : node.ip}:${node.port ?? '?'}` : node.id}</td>
-                        <td><span className={`badge ${node.status === 'POSE_PENALTY' ? 'warning' : 'success'}`}>{node.status === 'POSE_PENALTY' ? 'PoSe penalty · active' : 'Enabled'}</span></td>
-                        <td>
-                          <span className={`badge ${node.versionState !== 'fresh' ? '' : node.isDeprecated ? 'warning' : 'success'}`}>
-                            {node.walletVersion ?? 'Unknown'}
-                          </span>
-                        </td>
-                        <td><span className={`badge ${node.versionState === 'fresh' ? 'success' : 'warning'}`}>{node.versionState === 'fresh' ? 'Fresh' : node.versionState === 'stale' ? 'Older / undated' : 'Unknown'}</span></td>
-                        <td>
-                          <div className="network-source-list">
-                            {node.sources.map((source) => <span className="badge" key={source}>{sourceLabel(source)}</span>)}
-                          </div>
-                        </td>
-                        <td className="text-muted" title={node.lastVersionObservedAt ? new Date(node.lastVersionObservedAt).toLocaleString() : 'No version observation timestamp'}>{formatObservedAge(node.lastVersionObservedAt, nowMs)}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {observedPageCount > 1 && (
-                <div className="network-pagination">
-                  <span>
-                    {safeObservedPage * OBSERVED_PAGE_SIZE + 1}-{Math.min((safeObservedPage + 1) * OBSERVED_PAGE_SIZE, observedNodes.length)} of {formatNumber(observedNodes.length)}
-                  </span>
-                  <div>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-secondary"
-                      disabled={safeObservedPage === 0}
-                      onClick={() => setObservedPage(Math.max(0, safeObservedPage - 1))}
-                    >
-                      Previous
-                    </button>
-                    <button
-                      type="button"
-                      className="btn btn-sm btn-secondary"
-                      disabled={safeObservedPage >= observedPageCount - 1}
-                      onClick={() => setObservedPage(Math.min(observedPageCount - 1, safeObservedPage + 1))}
-                    >
-                      Next
-                    </button>
-                  </div>
-                </div>
-              )}
-            </>
-          )}
-        </div>
-      ) : (
+      {versionScope === 'direct' && (
         <div className="card">
           <div className="card-header">
             <h2 className="card-title"><HiOutlineServerStack /> Connected Peers</h2>

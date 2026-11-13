@@ -155,11 +155,17 @@ test('an address search opens the address page with its flows @smoke', async ({ 
   await page.goto(`/search?q=${SENDER}`);
 
   await expect(page).toHaveURL(new RegExp(`/address/${SENDER}$`));
-  await expect(page.getByRole('heading', { name: 'Address', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: SENDER, exact: true, level: 1 })).toBeVisible();
   await expect(page.locator('.stat-card').filter({ hasText: 'Transactions' })).toContainText('1');
-  const flow = page.locator('.searchv2-flow-card');
-  await expect(flow).toHaveCount(1);
-  await expect(flow).toContainText('Self / Change Out');
+  // One line per transaction; it paid RECIPIENT and kept the change, so it is a send.
+  const row = page.locator('.address-tx-row');
+  await expect(row).toHaveCount(1);
+  await expect(row.locator('.address-tx-row-kind')).toHaveText('Sent');
+  await expect(row.locator('.address-tx-row-amount')).toHaveText('-10.0001 DFCN');
+  await expect(row.locator(`a.address-tx-row-txid[href="/tx/${TXID}"]`)).toBeVisible();
+  await expect(page.locator('.searchv2-flow-card')).toHaveCount(0);
+  await row.getByRole('button', { name: /^Show the flow of transaction/ }).click();
+  const flow = row.locator('.searchv2-flow-card');
   await expect(flow).toContainText('Net on this address: -10.0001 DFCN');
   // The address's own rows open the transaction; the other side opens its address.
   await expect(flow.locator(`a[href="/tx/${TXID}"]`).first()).toBeVisible();
@@ -227,12 +233,12 @@ test('the address and transaction pages tell a missing summary and a failed requ
 
   await page.goto(`/address/${SENDER}`);
   await expect(page.getByText('Address summary is not indexed yet')).toBeVisible();
-  await expect(page.locator('.searchv2-flow-card')).toHaveCount(1);
+  await expect(page.locator('.address-tx-row')).toHaveCount(1);
   await expect(page.getByText('Address not found')).toHaveCount(0);
 
   await page.goto(`/address/${RECIPIENT}`);
   await expect(page.getByText('Address details could not be loaded')).toBeVisible();
-  await expect(page.locator('.searchv2-flow-card')).toHaveCount(1);
+  await expect(page.locator('.address-tx-row')).toHaveCount(1);
   await expect(page.getByText('Address summary is not indexed yet')).toHaveCount(0);
   expect(summaryRequests.count).toBe(2); // a failed request is tried once more
 

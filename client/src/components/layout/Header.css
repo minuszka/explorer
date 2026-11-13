@@ -163,13 +163,9 @@
   padding: 4px;
 }
 
-/* The desktop page shell intentionally has no horizontal padding. Keep the
-   brand, navigation border, and page cards on that same vertical edge. */
+/* The header, the page and the footer share the .container side gutter, so the brand, the
+   navigation border and the page cards stay on one vertical edge at every width. */
 @media (min-width: 1081px) {
-  .header-shell.container {
-    padding-inline: 0;
-  }
-
   .header-nav-shell {
     margin-inline: 0;
   }

@@ -286,6 +286,112 @@
   color: var(--error);
 }
 
+/* Address page: one line per transaction, opening its flow below. */
+.address-tx-rows {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.address-tx-row {
+  border-bottom: 1px solid var(--border-light);
+}
+
+.address-tx-row:last-child {
+  border-bottom: none;
+}
+
+.address-tx-row-line {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+  grid-template-areas: 'kind txid block time amount toggle';
+  align-items: center;
+  gap: 0.45rem 0.9rem;
+  padding: 0.6rem 0.25rem;
+}
+
+.address-tx-row-kind {
+  grid-area: kind;
+  display: inline-flex;
+  gap: 0.35rem;
+}
+
+.address-tx-row-txid {
+  grid-area: txid;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.address-tx-row-block {
+  grid-area: block;
+  white-space: nowrap;
+}
+
+.address-tx-row-time {
+  grid-area: time;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.address-tx-row-amount {
+  grid-area: amount;
+  font-weight: 600;
+  text-align: right;
+  white-space: nowrap;
+}
+
+.address-tx-row-amount.positive {
+  color: var(--success);
+}
+
+.address-tx-row-amount.negative {
+  color: var(--error);
+}
+
+.address-tx-row-amount.flat {
+  color: var(--text-primary);
+}
+
+.address-tx-row-toggle {
+  grid-area: toggle;
+  justify-self: end;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  cursor: pointer;
+}
+
+.address-tx-row-toggle:hover,
+.address-tx-row-toggle:focus-visible {
+  border-color: var(--accent-primary);
+  color: var(--accent-primary);
+}
+
+.address-tx-row-toggle svg {
+  transition: transform 0.2s ease;
+}
+
+.address-tx-row.open .address-tx-row-toggle svg {
+  transform: rotate(180deg);
+}
+
+.address-tx-row-flow {
+  padding: 0 0 0.75rem;
+}
+
+.searchv2-flow-card.embedded {
+  margin: 0;
+}
+
 .searchv2-address-flows .card-header {
   align-items: center;
 }
@@ -352,6 +458,14 @@
 }
 
 @media (max-width: 640px) {
+  /* Two lines on a phone; the amount stays on the first one. */
+  .address-tx-row-line {
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    grid-template-areas:
+      'kind txid amount'
+      'block time toggle';
+  }
+
   .searchv2-summary-grid {
     grid-template-columns: 1fr;
   }

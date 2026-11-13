@@ -7,7 +7,7 @@ import {
   NET_TOLERANCE,
   buildInputEntries,
   buildOutputEntries,
-  getDirectionSummary,
+  classifyTransaction,
   type FlowEntry,
 } from './flowModel';
 import './flow.css';
@@ -48,6 +48,8 @@ interface FlowCardProps {
   previewLimit?: number;
   /** Show each output's script type under its address, as the full transaction page does. */
   showScriptType?: boolean;
+  /** The txid, label, block and time line; off when the card opens inside an address-page row that already shows them. */
+  showHeader?: boolean;
 }
 
 export default function FlowCard({
@@ -55,10 +57,11 @@ export default function FlowCard({
   focusAddress,
   previewLimit = DEFAULT_PREVIEW_LIMIT,
   showScriptType = false,
+  showHeader = true,
 }: FlowCardProps) {
   const inputs = buildInputEntries(tx, focusAddress);
   const outputs = buildOutputEntries(tx, focusAddress);
-  const direction = getDirectionSummary(tx, focusAddress);
+  const direction = classifyTransaction(tx, focusAddress);
   const txTotalIn =
     typeof tx.totalValueIn === 'number'
       ? tx.totalValueIn
@@ -80,31 +83,33 @@ export default function FlowCard({
   };
 
   return (
-    <article className="card searchv2-flow-card">
-      <div className="searchv2-flow-header">
-        <div className="searchv2-flow-hashline">
-          <HiOutlineArrowsRightLeft />
-          <Link to={txPath(tx.txid)} className="hash mono">
-            {truncateHash(tx.txid, 26)}
-          </Link>
-          {tx.isDonation && <span className="badge donate">Donate</span>}
-        </div>
-
-        <div className="searchv2-flow-meta">
-          <span className={`badge ${direction.tone !== 'neutral' ? direction.tone : ''}`}>{direction.label}</span>
-          <span className="searchv2-flow-meta-item">
-            <HiOutlineCube />
-            <Link to={blockPath(tx.blockheight)} className="hash">
-              #{formatNumber(tx.blockheight)}
+    <article className={`card searchv2-flow-card${showHeader ? '' : ' embedded'}`}>
+      {showHeader && (
+        <div className="searchv2-flow-header">
+          <div className="searchv2-flow-hashline">
+            <HiOutlineArrowsRightLeft />
+            <Link to={txPath(tx.txid)} className="hash mono">
+              {truncateHash(tx.txid, 26)}
             </Link>
-          </span>
-          <span className="searchv2-flow-meta-item">
-            <HiOutlineClock />
-            {formatAge(tx.blocktime)} ({formatDate(tx.blocktime)})
-          </span>
-          <span className="searchv2-flow-meta-item">{formatNumber(tx.confirmations)} confirmations</span>
+            {tx.isDonation && <span className="badge donate">Donate</span>}
+          </div>
+
+          <div className="searchv2-flow-meta">
+            <span className={`badge ${direction.tone !== 'neutral' ? direction.tone : ''}`}>{direction.label}</span>
+            <span className="searchv2-flow-meta-item">
+              <HiOutlineCube />
+              <Link to={blockPath(tx.blockheight)} className="hash">
+                #{formatNumber(tx.blockheight)}
+              </Link>
+            </span>
+            <span className="searchv2-flow-meta-item">
+              <HiOutlineClock />
+              {formatAge(tx.blocktime)} ({formatDate(tx.blocktime)})
+            </span>
+            <span className="searchv2-flow-meta-item">{formatNumber(tx.confirmations)} confirmations</span>
+          </div>
         </div>
-      </div>
+      )}
 
       <div className="searchv2-flow-grid">
         <div className="searchv2-flow-column">
@@ -169,6 +174,12 @@ export default function FlowCard({
         <span className="searchv2-flow-metric">
           Fee: <strong>{formatCoin(txFee)} DFCN</strong>
         </span>
+        {/* Without the header the confirmations would otherwise be gone from the card. */}
+        {!showHeader && (
+          <span className="searchv2-flow-metric">
+            Confirmations: <strong>{formatNumber(tx.confirmations)}</strong>
+          </span>
+        )}
         {focusAddress && (
           <span
             className={`searchv2-flow-metric searchv2-flow-net ${
