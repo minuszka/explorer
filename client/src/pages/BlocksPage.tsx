@@ -56,7 +56,7 @@ export default function BlocksPage() {
                     <th>Txs</th>
                     <th>Difficulty</th>
                     <th>Value Out</th>
-                    <th>Extracted by</th>
+                    <th>Producer</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -76,13 +76,14 @@ export default function BlocksPage() {
                       <td>{block.nTx}</td>
                       <td className="mono">{formatNumber(block.difficulty, 2)}</td>
                       <td className="mono">{formatNumber(block.totalValueOut || 0, 2)} DFCN</td>
+                      {/* The staker (or premine miner) read from the chain; minedBy is the masternode the block paid. */}
                       <td className="mono">
-                        {block.minedBy ? (
-                          <Link to={addressPath(block.minedBy)} className="hash mono">
-                            {truncateHash(block.minedBy, 12)}
+                        {block.producer ? (
+                          <Link to={addressPath(block.producer.address)} className="hash mono" title={block.producer.address}>
+                            {truncateHash(block.producer.address, 12)}
                           </Link>
                         ) : (
-                          <span className="text-muted">-</span>
+                          <span className="text-muted">Unknown</span>
                         )}
                       </td>
                     </tr>

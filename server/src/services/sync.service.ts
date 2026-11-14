@@ -59,6 +59,11 @@ interface ProcessedBlockSummary {
 class SyncService {
   private isRunning = false;
   private intervalId: NodeJS.Timeout | null = null;
+  // Set by stop(): the running sync ends after its current block, and no new run starts.
+  private stopRequested = false;
+  private currentSync: Promise<void> | null = null;
+  // How long stop() waits for the current block before it leaves the lock to startup recovery.
+  private stopTimeoutMs = 15_000;
   private readonly LOG_INTERVAL = 100;
   private readonly REBUILD_LOG_INTERVAL = 10000;
   private readonly ADDRESS_BULK_FLUSH_THRESHOLD = 2000;
@@ -131,6 +136,21 @@ class SyncService {
       },
       { upsert: true }
     );
+  }
+
+  /**
+   * Sets addressRebuildRequired before a block's first write (see processBlock) and says whether it
+   * was already set, so that the block does not clear a rebuild requested for another reason.
+   */
+  private async markBlockInProgress(): Promise<boolean> {
+    const before = await SyncState.findOneAndUpdate(
+      { key: 'main' },
+      { addressRebuildRequired: true, heartbeatAt: new Date() },
+      { upsert: true, new: false }
+    )
+      .select({ addressRebuildRequired: 1 })
+      .lean<{ addressRebuildRequired?: boolean }>();
+    return before?.addressRebuildRequired === true;
   }
 
   private async recoverStartupState(): Promise<void> {
@@ -581,6 +601,7 @@ class SyncService {
     }
 
     logger.info('Starting blockchain sync service...');
+    this.stopRequested = false;
 
     await this.ensureIndexVersion();
     await this.ensureSatoshiDataVersion();
@@ -607,7 +628,27 @@ class SyncService {
       clearInterval(this.intervalId);
       this.intervalId = null;
     }
-    this.isRunning = false;
+    this.stopRequested = true;
+
+    // A running sync stops between blocks and releases the lock itself. If the block in progress
+    // does not finish in time, the lock stays: the next start sees it and rebuilds the address index.
+    const running = this.currentSync;
+    if (running) {
+      let timer: NodeJS.Timeout | undefined;
+      const finished = await Promise.race([
+        running.then(() => true, () => true),
+        new Promise<boolean>((resolve) => {
+          timer = setTimeout(() => resolve(false), this.stopTimeoutMs);
+        }),
+      ]);
+      clearTimeout(timer);
+      if (!finished) {
+        logger.warn(`Sync did not stop within ${this.stopTimeoutMs} ms; leaving its lock for startup recovery.`);
+        return;
+      }
+      logger.info('Sync service stopped');
+      return;
+    }
 
     await SyncState.findOneAndUpdate(
       { key: 'main' },
@@ -623,10 +664,20 @@ class SyncService {
   }
 
   async sync(): Promise<void> {
-    if (this.isRunning) {
+    if (this.isRunning || this.currentSync || this.stopRequested) {
       return;
     }
 
+    const run = this.runSync();
+    this.currentSync = run;
+    try {
+      await run;
+    } finally {
+      if (this.currentSync === run) this.currentSync = null;
+    }
+  }
+
+  private async runSync(): Promise<void> {
     const syncStartedAt = new Date();
 
     // Atomic DB-level lock: only acquire if not already running.
@@ -719,6 +770,8 @@ class SyncService {
       let lastCheckpointAt = Date.now();
 
       while (currentHeight <= daemonHeight) {
+        // A requested stop takes effect between blocks, never in the middle of one.
+        if (this.stopRequested) break;
         const processedBlock = await this.processBlock(currentHeight);
         lastHash = processedBlock.hash;
         lastKnownSyncedHeight = currentHeight;
@@ -773,11 +826,12 @@ class SyncService {
         }
       }
 
-      // Final update
+      // Final update: the last block indexed, which is below the daemon's tip after a stop.
+      const reachedHeight = currentHeight - 1;
       await SyncState.findOneAndUpdate(
         { key: 'main' },
         {
-          lastSyncedHeight: daemonHeight,
+          lastSyncedHeight: reachedHeight,
           lastSyncedHash: lastHash,
           lastSyncedAt: new Date(),
           isRunning: false,
@@ -787,7 +841,12 @@ class SyncService {
         },
         { upsert: true }
       );
-      lastKnownSyncedHeight = daemonHeight;
+      lastKnownSyncedHeight = reachedHeight;
+      if (reachedHeight < daemonHeight) {
+        this.publishSyncStatus('idle', daemonHeight, reachedHeight, { message: 'Sync stopped.' });
+        logger.info(`Sync stopped at height ${reachedHeight}.`);
+        return;
+      }
       this.publishSyncStatus('complete', daemonHeight, daemonHeight, {
         message: 'Sync complete.',
       });
@@ -864,6 +923,14 @@ class SyncService {
       rpcBlock = (await rpcService.getBlock(hash, 1)) as RpcBlock;
     }
 
+    // From here on the block is written piece by piece: each transaction (marked as applied), then
+    // the block's balance changes, then the block. Mark the block as in progress before the first
+    // write and clear the mark after the last. If anything in between fails, or the process stops,
+    // the mark stays and the next run rebuilds the address index from the stored transactions; the
+    // per-transaction marks then apply exactly what is still missing. If the mark cannot be
+    // written, nothing is.
+    const rebuildPendingBefore = await this.markBlockInProgress();
+
     const mintSat = coinToSat(typeof rpcBlock.mint === 'number' ? rpcBlock.mint : 0);
     let rewardSat = mintSat;
     let totalValueOutSat = 0n;
@@ -894,7 +961,7 @@ class SyncService {
         rpcTx = entry;
       }
 
-      const result = await this.processTransaction(rpcTx, rpcBlock, { deferAddressUpdates: true });
+      const result = await this.processTransaction(rpcTx, rpcBlock);
       if (result.addressDeltas) {
         mergeAddressDeltas(blockAddressDeltas, result.addressDeltas);
       }
@@ -973,6 +1040,14 @@ class SyncService {
       );
     }
 
+    // Everything of this block is written. A rebuild that was already pending stays pending.
+    if (!rebuildPendingBefore) {
+      await SyncState.findOneAndUpdate(
+        { key: 'main' },
+        { addressRebuildRequired: false, heartbeatAt: new Date() }
+      );
+    }
+
     return {
       hash: rpcBlock.hash,
       height: rpcBlock.height,
@@ -984,10 +1059,13 @@ class SyncService {
 
   // ── Transaction Processing ──────────────────────────────────────
 
+  /**
+   * Stores one transaction and returns its balance changes, if they have not been applied before.
+   * The caller (processBlock) merges them and writes them once for the whole block.
+   */
   private async processTransaction(
     rpcTx: RpcTransaction,
-    rpcBlock: RpcBlock,
-    opts?: { deferAddressUpdates?: boolean }
+    rpcBlock: RpcBlock
   ): Promise<{
     totalValueOutSat: bigint;
     isCoinbase: boolean;
@@ -1131,25 +1209,11 @@ class SyncService {
       canApplyAddressDeltasForTx && previousTx?.addressUpdatesApplied !== true;
     if (shouldApplyAddressDeltas) {
       const addressDeltas = collectAddressDeltas(vins, vouts, isCoinbase);
-
-      if (opts?.deferAddressUpdates) {
-        return {
-          totalValueOutSat,
-          isCoinbase,
-          addressDeltas: addressDeltas.size > 0 ? addressDeltas : undefined,
-        };
-      }
-
-      if (addressDeltas.size > 0) {
-        try {
-          await this.applyAddressDeltas(addressDeltas, rpcBlock.time);
-        } catch (error) {
-          await this.markAddressRebuildRequired(
-            `Address update failed for tx ${rpcTx.txid}; forcing deterministic rebuild.`
-          );
-          throw error;
-        }
-      }
+      return {
+        totalValueOutSat,
+        isCoinbase,
+        addressDeltas: addressDeltas.size > 0 ? addressDeltas : undefined,
+      };
     }
 
     return { totalValueOutSat, isCoinbase };

@@ -6,6 +6,7 @@ import { Transaction } from '../../models/Transaction';
 import { withCachePolicy } from '../../middleware/cachePolicy';
 import type { SatLike } from '../../utils/amounts';
 import { satToBigInt, satToCoin } from '../../utils/amounts';
+import { exactSat, stakerOf, type RoleTx } from '../../utils/blockRoles';
 import {
   addressParamSchema,
   firstValidationIssueMessage,
@@ -508,6 +509,67 @@ function buildRewardPipeline(
   ];
 }
 
+const STAKE_CANDIDATE_PROJECTION = {
+  _id: 0,
+  isCoinbase: 1,
+  blocktime: 1,
+  'vin.address': 1,
+  'vin.valueSat': 1,
+  'vout.valueSat': 1,
+  'vout.scriptPubKey.addresses': 1,
+  'vout.scriptPubKey.hex': 1,
+};
+
+type StakeCandidate = Omit<RoleTx, 'vin'> & {
+  blocktime?: number;
+  vin?: Array<{ address?: unknown; valueSat?: unknown } | null | undefined> | null;
+};
+
+/**
+ * The stakes an address made and their net reward. A stake is a transaction in which the address
+ * is the staker by `stakerOf`, the same rule the block page uses; its reward is what came back to
+ * the address minus what it put in. A stake whose amounts are not all stored as whole satoshis is
+ * counted but adds nothing to the total, rather than a guessed amount.
+ *
+ * The candidates are the address's own spends that are not coinbases (indexed by `vin.address`),
+ * read one batch at a time; their number grows with the address's activity.
+ */
+async function loadStakeRewards(address: string) {
+  let count = 0;
+  let netSat = 0n;
+  let lastBlocktime: number | null = null;
+  const cursor = Transaction.find({ isCoinbase: false, 'vin.address': address })
+    .select(STAKE_CANDIDATE_PROJECTION)
+    .lean<StakeCandidate[]>()
+    .cursor({ batchSize: 500 });
+
+  for await (const doc of cursor) {
+    const tx = doc as unknown as StakeCandidate;
+    if (stakerOf(tx as RoleTx) !== address) continue;
+    count += 1;
+    if (typeof tx.blocktime === 'number' && (lastBlocktime == null || tx.blocktime > lastBlocktime)) {
+      lastBlocktime = tx.blocktime;
+    }
+
+    // stakerOf has checked that every input is the address's own.
+    let staked: bigint | null = 0n;
+    for (const input of tx.vin ?? []) {
+      const value = exactSat(input?.valueSat);
+      staked = staked != null && value != null ? staked + value : null;
+    }
+    let returned: bigint | null = 0n;
+    for (const output of tx.vout ?? []) {
+      const addresses = output?.scriptPubKey?.addresses;
+      if (!Array.isArray(addresses) || addresses.length !== 1 || addresses[0] !== address) continue;
+      const value = exactSat(output?.valueSat);
+      returned = returned != null && value != null ? returned + value : null;
+    }
+    if (staked != null && returned != null) netSat += returned - staked;
+  }
+
+  return { count, netSat, lastBlocktime };
+}
+
 router.get('/:address/rewards', withCachePolicy('short'), async (req: Request, res: Response) => {
   try {
     const paramParsed = addressParamSchema.safeParse(req.params);
@@ -536,23 +598,17 @@ router.get('/:address/rewards', withCachePolicy('short'), async (req: Request, r
     }
 
     const fetchPromise = (async (): Promise<RewardsResponsePayload> => {
-      const [coinbaseAgg, stakeAgg] = await Promise.all([
+      const [coinbaseAgg, stakes] = await Promise.all([
         Transaction.aggregate<AggResult>(
           buildRewardPipeline(
             { isCoinbase: true, 'vout.scriptPubKey.addresses': address },
             address
           )
         ),
-        Transaction.aggregate<AggResult>(
-          buildRewardPipeline(
-            { isCoinbase: false, feeSat: '0', 'vout.scriptPubKey.addresses': address },
-            address
-          )
-        ),
+        loadStakeRewards(address),
       ]);
 
       const cb = coinbaseAgg[0];
-      const st = stakeAgg[0];
       const payload: RewardsResponsePayload = {
         success: true,
         data: {
@@ -560,9 +616,9 @@ router.get('/:address/rewards', withCachePolicy('short'), async (req: Request, r
           coinbaseTxCount: cb?.count ?? 0,
           coinbaseTotal: satToCoin(cb?.totalSat ?? 0),
           lastCoinbaseAt: cb?.lastBlocktime ?? null,
-          stakeTxCount: st?.count ?? 0,
-          stakeTotal: satToCoin(st?.totalSat ?? 0),
-          lastStakeAt: st?.lastBlocktime ?? null,
+          stakeTxCount: stakes.count,
+          stakeTotal: satToCoin(stakes.netSat),
+          lastStakeAt: stakes.lastBlocktime,
         },
       };
       setRewardsCache(cacheKey, payload);

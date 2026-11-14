@@ -12,8 +12,12 @@ const optionalQueryInt = (min: number, max: number) =>
     z.coerce.number().int().min(min).max(max).optional()
   );
 
+// Hashes are stored in lower case. A hash typed in capitals is the same hash, so it is lowered
+// here, once, before any cache key or database query sees it.
+const toLowerCase = (value: string) => value.toLowerCase();
+
 export const txidParamSchema = z.object({
-  txid: z.string().trim().regex(/^[a-fA-F0-9]{64}$/, 'Invalid txid format'),
+  txid: z.string().trim().regex(/^[a-fA-F0-9]{64}$/, 'Invalid txid format').transform(toLowerCase),
 });
 
 export const addressParamSchema = z.object({
@@ -30,7 +34,8 @@ export const hashOrHeightParamSchema = z.object({
   hashOrHeight: z
     .string()
     .trim()
-    .regex(/^(\d+|[a-fA-F0-9]{64})$/, 'Value must be a block height or 64-char hash'),
+    .regex(/^(\d+|[a-fA-F0-9]{64})$/, 'Value must be a block height or 64-char hash')
+    .transform(toLowerCase),
 });
 
 export const searchQuerySchema = z.object({

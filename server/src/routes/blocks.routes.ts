@@ -3,7 +3,7 @@ import { Block } from '../models/Block';
 import { Transaction } from '../models/Transaction';
 import { config } from '../config';
 import { getChainTip } from '../services/chainTip.service';
-import { loadBlockRoles } from '../services/blockRoles.service';
+import { loadBlockRoles, withBlockProducers } from '../services/blockRoles.service';
 import { withCachePolicy } from '../middleware/cachePolicy';
 import { normalizeBlockAmounts, normalizeTransactionAmounts } from '../utils/amounts';
 import {
@@ -32,7 +32,11 @@ const BLOCK_SUMMARY_CACHE_LIMIT = 300;
 const BLOCK_TX_PAGE_CACHE_LIMIT = 500;
 const blockSummaryCache = new Map<string, { atMs: number; payload: unknown }>();
 const blockTxPageCache = new Map<string, { atMs: number; payload: unknown }>();
-const blockSummaryInFlight = new Map<string, Promise<{ success: true; data: Record<string, unknown> } | null>>();
+type BlockSummary = Record<string, unknown> & { height: number };
+// The cache holds the block and the tip height it was read at, not the answer: the confirmations
+// are counted from the chain tip each time the block is served.
+type BlockSummaryEntry = { block: BlockSummary; bestHeight: number };
+const blockSummaryInFlight = new Map<string, Promise<BlockSummaryEntry | null>>();
 const blockTxPageInFlight = new Map<
   string,
   Promise<{
@@ -99,6 +103,8 @@ const BLOCK_LIST_PROJECTION = {
   minedBy: 1,
   rewardSat: 1,
   size: 1,
+  // The first two transactions name the block's producer (withBlockProducers).
+  txids: { $slice: 2 },
 };
 
 const BLOCK_TX_LIST_PROJECTION = {
@@ -120,6 +126,26 @@ function withBlockConfirmations<T extends { height: number; confirmations?: numb
 ): T {
   (block as Record<string, unknown>).confirmations = Math.max(0, bestHeight - block.height + 1);
   return block;
+}
+
+/** The current tip height; if the tip cannot be read, the last height known to the caller. */
+function tipHeightOr(fallback: number): Promise<number> {
+  return getChainTip().then((tip) => tip.height, () => fallback);
+}
+
+/** The answer for a cached block: a copy, with the confirmations counted from the given tip height. */
+function blockSummaryPayload(entry: BlockSummaryEntry, bestHeight: number): { success: true; data: BlockSummary } {
+  return { success: true, data: withBlockConfirmations({ ...entry.block }, bestHeight) };
+}
+
+/**
+ * A block read while it was the chain tip has no link to the block after it. Once the chain has
+ * grown past the height the block was read at, the cached copy is out of date and is read again.
+ * Comparing with that height keeps a block whose link is missing for another reason from being
+ * read on every request.
+ */
+function awaitsNextBlock(entry: BlockSummaryEntry, bestHeight: number): boolean {
+  return entry.block.nextblockhash == null && bestHeight > entry.block.height && bestHeight > entry.bestHeight;
 }
 
 function withTxConfirmations<T extends { blockheight: number; confirmations?: number }>(
@@ -191,12 +217,12 @@ router.get('/', withCachePolicy('short'), async (req: Request, res: Response) =>
           .sort({ height: -1 })
           .limit(limit + 1)
           .select(BLOCK_LIST_PROJECTION)
-          .lean(),
+          .lean<Array<Record<string, unknown> & { height: number; txids?: unknown }>>(),
         getChainTip(),
       ]);
 
       const hasMore = rows.length > limit;
-      const pageRows = hasMore ? rows.slice(0, limit) : rows;
+      const pageRows = await withBlockProducers(hasMore ? rows.slice(0, limit) : rows);
       const bestHeight = tip.height;
       const data = pageRows.map((block) =>
         withBlockConfirmations(normalizeBlockAmounts(block), bestHeight)
@@ -217,7 +243,13 @@ router.get('/', withCachePolicy('short'), async (req: Request, res: Response) =>
     }
 
     const [blocks, total, tip] = await Promise.all([
-      Block.find(filter).sort({ height: -1 }).skip(skip).limit(limit).select(BLOCK_LIST_PROJECTION).lean(),
+      Block.find(filter)
+        .sort({ height: -1 })
+        .skip(skip)
+        .limit(limit)
+        .select(BLOCK_LIST_PROJECTION)
+        .lean<Array<Record<string, unknown> & { height: number; txids?: unknown }>>()
+        .then(withBlockProducers),
       hasTimeFilter ? Block.countDocuments(filter) : getTotalBlockCount(),
       getChainTip(),
     ]);
@@ -265,7 +297,12 @@ router.get('/latest', withCachePolicy('short'), async (req: Request, res: Respon
 
     const fetchPromise = (async () => {
       const [blocks, tip] = await Promise.all([
-        Block.find().sort({ height: -1 }).limit(count).select(BLOCK_LIST_PROJECTION).lean(),
+        Block.find()
+          .sort({ height: -1 })
+          .limit(count)
+          .select(BLOCK_LIST_PROJECTION)
+          .lean<Array<Record<string, unknown> & { height: number; txids?: unknown }>>()
+          .then(withBlockProducers),
         getChainTip(),
       ]);
       const bestHeight = tip.height;
@@ -301,35 +338,37 @@ router.get('/:hashOrHeight', withCachePolicy('short'), async (req: Request, res:
     if (!paramParsed.success) {
       return sendValidationError(res, firstValidationIssueMessage(paramParsed.error));
     }
+    // The schema lowers a hash, so it is also the cache key.
     const { hashOrHeight } = paramParsed.data;
     const isHeight = /^\d+$/.test(hashOrHeight);
-    const normalizedKey = isHeight ? `h:${hashOrHeight}` : `x:${hashOrHeight.toLowerCase()}`;
+    const normalizedKey = isHeight ? `h:${hashOrHeight}` : `x:${hashOrHeight}`;
     const cachedEntry = peekLruCached(blockSummaryCache, normalizedKey);
-    const cached =
-      cachedEntry && isFresh(cachedEntry.atMs, BLOCK_SUMMARY_TTL_MS)
-        ? (cachedEntry.payload as { success: true; data: Record<string, unknown> })
-        : null;
-    if (cached) {
-      return res.json(cached);
+    const cachedSummary = cachedEntry ? (cachedEntry.payload as BlockSummaryEntry) : null;
+    if (cachedEntry && cachedSummary && isFresh(cachedEntry.atMs, BLOCK_SUMMARY_TTL_MS)) {
+      const bestHeight = await tipHeightOr(cachedSummary.bestHeight);
+      if (!awaitsNextBlock(cachedSummary, bestHeight)) {
+        return res.json(blockSummaryPayload(cachedSummary, bestHeight));
+      }
     }
     const staleCached =
-      cachedEntry && isFresh(cachedEntry.atMs, BLOCK_SUMMARY_STALE_MAX_MS)
-        ? (cachedEntry.payload as { success: true; data: Record<string, unknown> })
+      cachedEntry && cachedSummary && isFresh(cachedEntry.atMs, BLOCK_SUMMARY_STALE_MAX_MS)
+        ? cachedSummary
         : null;
-    const staleFallbackAllowed = !!staleCached;
+    const answer = async (entry: BlockSummaryEntry) =>
+      res.json(blockSummaryPayload(entry, await tipHeightOr(entry.bestHeight)));
     const inFlight = blockSummaryInFlight.get(normalizedKey);
     if (inFlight) {
       try {
-        const dedupedPayload = await inFlight;
-        if (!dedupedPayload) {
+        const dedupedEntry = await inFlight;
+        if (!dedupedEntry) {
           return res
             .status(404)
             .json({ success: false, error: { code: 'NOT_FOUND', message: 'Block not found' } });
         }
-        return res.json(dedupedPayload);
+        return await answer(dedupedEntry);
       } catch {
-        if (staleFallbackAllowed && staleCached) {
-          return res.json(staleCached);
+        if (staleCached) {
+          return await answer(staleCached);
         }
         throw new Error('Block summary in-flight query failed');
       }
@@ -346,30 +385,29 @@ router.get('/:hashOrHeight', withCachePolicy('short'), async (req: Request, res:
         return null;
       }
 
-      const bestHeight = tip.height;
       // Who staked (or mined) the block and which masternode it paid; null where the chain data
       // does not show it. `minedBy` stays as stored: the first address the coinbase pays.
       const roles = await loadBlockRoles(block.txids);
-      const payload = {
-        success: true as const,
-        data: { ...withBlockConfirmations(normalizeBlockAmounts(block), bestHeight), ...roles },
+      const entry: BlockSummaryEntry = {
+        block: { ...normalizeBlockAmounts(block), ...roles },
+        bestHeight: tip.height,
       };
-      setLruCached(blockSummaryCache, normalizedKey, payload, BLOCK_SUMMARY_CACHE_LIMIT);
-      return payload;
+      setLruCached(blockSummaryCache, normalizedKey, entry, BLOCK_SUMMARY_CACHE_LIMIT);
+      return entry;
     })();
 
     blockSummaryInFlight.set(normalizedKey, fetchPromise);
     try {
-      const payload = await fetchPromise;
-      if (!payload) {
+      const entry = await fetchPromise;
+      if (!entry) {
         return res
           .status(404)
           .json({ success: false, error: { code: 'NOT_FOUND', message: 'Block not found' } });
       }
-      return res.json(payload);
+      return await answer(entry);
     } catch (error) {
-      if (staleFallbackAllowed && staleCached) {
-        return res.json(staleCached);
+      if (staleCached) {
+        return await answer(staleCached);
       }
       throw error;
     } finally {

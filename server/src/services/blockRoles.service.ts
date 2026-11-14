@@ -1,6 +1,6 @@
 import { Block } from '../models/Block';
 import { Transaction } from '../models/Transaction';
-import { blockRoles, stakerOf, type BlockRoles, type RoleTx } from '../utils/blockRoles';
+import { blockRoles, stakerOf, type BlockProducer, type BlockRoles, type RoleTx } from '../utils/blockRoles';
 
 const ROLE_TX_PROJECTION = {
   _id: 0,
@@ -20,6 +20,23 @@ export async function loadBlockRoles(txids: unknown): Promise<BlockRoles> {
     .select(ROLE_TX_PROJECTION)
     .lean<RoleTx[]>();
   return blockRoles(txids, txs);
+}
+
+/**
+ * The producer of each listed block, from the blocks' first two transactions in one query. Each
+ * block needs its first two `txids` (a `{ txids: { $slice: 2 } }` projection is enough); the list
+ * comes back in the same order, without `txids`, with `producer` (null when unknown).
+ */
+export async function withBlockProducers<T extends { txids?: unknown }>(
+  blocks: T[]
+): Promise<Array<T & { producer: BlockProducer | null }>> {
+  const firstTwo = blocks.flatMap((block) =>
+    Array.isArray(block.txids) ? block.txids.slice(0, 2).filter((txid): txid is string => typeof txid === 'string') : []
+  );
+  const txs = firstTwo.length > 0
+    ? await Transaction.find({ txid: { $in: firstTwo } }).select(ROLE_TX_PROJECTION).lean<RoleTx[]>()
+    : [];
+  return blocks.map(({ txids, ...block }) => ({ ...block, producer: blockRoles(txids, txs).producer }) as T & { producer: BlockProducer | null });
 }
 
 /**

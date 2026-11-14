@@ -18,6 +18,10 @@ function TransactionView({ txid }: { txid: string }) {
 
   if (txQuery.isPending) return <StatePanel title="Loading transaction..." />;
 
+  // A refresh that fails after a new block keeps the transaction on screen; the states below
+  // are for a page without one.
+  if (txQuery.data) return <TransactionFlow tx={txQuery.data} />;
+
   if (isNotFoundError(txQuery.error)) {
     return (
       <StatePanel
@@ -28,17 +32,13 @@ function TransactionView({ txid }: { txid: string }) {
     );
   }
 
-  if (txQuery.error || !txQuery.data) {
-    return (
-      <StatePanel
-        tone="danger"
-        title="Transaction could not be loaded"
-        description={getErrorMessage(txQuery.error, 'Transaction details could not be loaded.')}
-      />
-    );
-  }
-
-  return <TransactionFlow tx={txQuery.data} />;
+  return (
+    <StatePanel
+      tone="danger"
+      title="Transaction could not be loaded"
+      description={getErrorMessage(txQuery.error, 'Transaction details could not be loaded.')}
+    />
+  );
 }
 
 export default function TransactionPage() {

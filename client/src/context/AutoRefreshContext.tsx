@@ -3,7 +3,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { AUTO_REFRESH_MS } from '../queryClient';
 import { usePageVisibility } from '../hooks/usePageVisibility';
 import { createRefreshQueue, type RefreshKeys } from '../utils/refreshQueue';
-import type { DashboardOverviewView, StatsView, SyncStatusView } from '../types/api';
+import type { DashboardOverviewView, StatsView } from '../types/api';
 import type {
   RealtimeServerEvent,
   RealtimeServerEventType,
@@ -12,31 +12,34 @@ import type {
 
 const WS_RECONNECT_BASE_MS = 1000;
 const WS_RECONNECT_MAX_MS = 15_000;
+// The open transaction, block and address pages. A key matches every query that starts with it,
+// and only the queries of the page on screen are asked again ('active').
+const DETAIL_PAGE_QUERY_KEYS: ReadonlyArray<ReadonlyArray<unknown>> = [
+  ['tx'],
+  ['block'],
+  ['block-txs'],
+  ['address'],
+  ['address-txs'],
+];
 const BLOCK_EVENT_REFRESH_QUERY_KEYS: ReadonlyArray<ReadonlyArray<unknown>> = [
   ['dashboard-overview'],
   ['stats'],
-  ['blocks'],
   ['blocks-cursor'],
-  ['txs'],
   ['txs-cursor'],
-  ['sync-status'],
+  ...DETAIL_PAGE_QUERY_KEYS,
 ];
 const TX_EVENT_REFRESH_QUERY_KEYS: ReadonlyArray<ReadonlyArray<unknown>> = [
   ['dashboard-overview'],
-  ['txs'],
   ['txs-cursor'],
   ['mempool'],
 ];
 const TERMINAL_SYNC_REFRESH_QUERY_KEYS: ReadonlyArray<ReadonlyArray<unknown>> = [
   ['dashboard-overview'],
   ['stats'],
-  ['sync-status'],
-  ['blocks'],
   ['blocks-cursor'],
-  ['txs'],
   ['txs-cursor'],
   ['mempool'],
-  ['migration-transparency'],
+  ...DETAIL_PAGE_QUERY_KEYS,
 ];
 
 const POLL_REFRESH_QUERY_KEYS = TERMINAL_SYNC_REFRESH_QUERY_KEYS;
@@ -121,22 +124,6 @@ function applyBlockToStats(
   if (blockHeight === current.blockHeight && lastBlockTime === current.lastBlockTime) return current;
 
   return { ...current, blockHeight, lastBlockTime };
-}
-
-function applySyncToStatus(
-  current: SyncStatusView | undefined,
-  payload: WsSyncStatusPayload
-): SyncStatusView | undefined {
-  if (!current) return current;
-  return {
-    ...current,
-    isRunning: isSyncRunningState(payload.state),
-    daemonHeight: payload.daemonHeight,
-    lastSyncedHeight: payload.lastSyncedHeight,
-    blocksRemaining: payload.blocksRemaining,
-    progress: payload.progress,
-    error: payload.error ?? null,
-  };
 }
 
 export function AutoRefreshProvider({ children }: { children: ReactNode }) {
@@ -271,9 +258,6 @@ export function AutoRefreshProvider({ children }: { children: ReactNode }) {
         if (parsed.type === 'sync:status') {
           queryClient.setQueryData<DashboardOverviewView | undefined>(['dashboard-overview'], (current) =>
             applySyncToDashboard(current, parsed.data)
-          );
-          queryClient.setQueryData<SyncStatusView | undefined>(['sync-status'], (current) =>
-            applySyncToStatus(current, parsed.data)
           );
 
           if (parsed.data.state === 'complete' || parsed.data.state === 'idle' || parsed.data.state === 'error') {

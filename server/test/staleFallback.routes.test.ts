@@ -10,8 +10,13 @@ const app = express();
 app.use('/search', searchRoutes);
 app.use('/address', addressRoutes);
 function query(value: unknown) {
+  // A lean query is awaited for its rows, or read one row at a time through a cursor.
+  const rows = Array.isArray(value) ? value : [];
+  const lean = Object.assign(Promise.resolve(value), {
+    cursor: () => (async function* () { yield* rows; })(),
+  });
   return { select: vi.fn().mockReturnThis(), sort: vi.fn().mockReturnThis(),
-    limit: vi.fn().mockReturnThis(), lean: vi.fn().mockResolvedValue(value) };
+    limit: vi.fn().mockReturnThis(), lean: vi.fn().mockReturnValue(lean) };
 }
 
 describe('stale response fallback', () => {

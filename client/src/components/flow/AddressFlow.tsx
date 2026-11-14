@@ -32,9 +32,11 @@ export default function AddressFlow({ address }: { address: string }) {
     retry: retryFailedRequestOnce,
   });
   const summary = summaryQuery.data ?? null;
-  const summaryNotFound = isNotFoundError(summaryQuery.error);
+  // A refresh that fails after a new block keeps what is on screen: the error states are only for
+  // a summary or a list that never loaded.
+  const summaryNotFound = !summary && isNotFoundError(summaryQuery.error);
   const summaryError =
-    summaryQuery.error != null && !summaryNotFound
+    !summary && summaryQuery.error != null && !summaryNotFound
       ? getErrorMessage(summaryQuery.error, 'Address details could not be loaded.')
       : null;
 
@@ -44,9 +46,13 @@ export default function AddressFlow({ address }: { address: string }) {
   });
   const txs = (txsQuery.data?.data || []) as TxView[];
   const pages = txsQuery.data?.pagination?.pages || 1;
-  const txsLoading = txsQuery.isPending || txsQuery.isFetching;
+  // Loading means no list of this page yet: the first load, or another page while the previous one
+  // stands in. A refresh of the list on screen keeps it visible.
+  const txsLoading = txsQuery.isPending || (txsQuery.isFetching && txsQuery.isPlaceholderData);
   const txsError =
-    txsQuery.error != null ? getErrorMessage(txsQuery.error, 'Address transactions could not be loaded.') : null;
+    txsQuery.error != null && !txsQuery.data
+      ? getErrorMessage(txsQuery.error, 'Address transactions could not be loaded.')
+      : null;
   const txTotal = summary?.txCount ?? txsQuery.data?.pagination?.total ?? txs.length;
 
   // Neither a summary nor a single indexed transaction: the explorer has never seen this address.

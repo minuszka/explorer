@@ -35,7 +35,7 @@ export interface RoleTx {
 const unknownRoles = (): BlockRoles => ({ producer: null, masternodePayee: null });
 
 /** An amount in satoshis, or null when it is missing or not a whole number of satoshis. */
-function exactSat(value: unknown): bigint | null {
+export function exactSat(value: unknown): bigint | null {
   if (typeof value === 'bigint') return value;
   if (typeof value === 'number') return Number.isSafeInteger(value) ? BigInt(value) : null;
   const text =

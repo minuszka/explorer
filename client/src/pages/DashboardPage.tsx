@@ -20,7 +20,8 @@ import {
 } from '../utils/formatters';
 import { useMarketSnapshot } from '../hooks/useMarketSnapshot';
 import { usePageVisibility } from '../hooks/usePageVisibility';
-import type { DashboardBlockView, DashboardTxView, TxListItemView } from '../types/api';
+import type { DashboardBlockView, DashboardTxView, TxListItemView, TxView } from '../types/api';
+import { classifyTransaction } from '../components/flow/flowModel';
 import './DashboardPage.css';
 import { txPath } from '../utils/routes';
 import { computeMasternodeEconomics } from '../utils/masternodeEconomics';
@@ -29,6 +30,44 @@ const REWARD_TOLERANCE = 0.0000001;
 const PROTOCOL_TX_TOLERANCE = 0.0000001;
 const EMPTY_BLOCKS: DashboardBlockView[] = [];
 const EMPTY_TXS: DashboardTxView[] = [];
+// The visitor's "Hide rewards" choice, kept in this browser only.
+const HIDE_REWARDS_KEY = 'deftrack.hideRewards';
+
+function readHideRewards(): boolean {
+  try {
+    return window.localStorage.getItem(HIDE_REWARDS_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeHideRewards(hide: boolean): void {
+  try {
+    if (hide) window.localStorage.setItem(HIDE_REWARDS_KEY, '1');
+    else window.localStorage.removeItem(HIDE_REWARDS_KEY);
+  } catch {
+    // Storage unavailable (private window, blocked site data): the choice lasts for this page only.
+  }
+}
+
+/** The one label the transaction and address pages use (Reward, Stake, Protocol or Transfer). */
+function classifyListedTx(tx: DashboardTxView) {
+  // The overview carries every field the classifier reads; the rest of a full transaction is not needed.
+  return classifyTransaction(tx as unknown as TxView);
+}
+
+function isRewardTx(tx: DashboardTxView): boolean {
+  const { kind } = classifyListedTx(tx);
+  return kind === 'reward' || kind === 'stake';
+}
+
+/** "Staked by D…", "Mined by D…" or "Producer unknown", from the producer the server read from the chain. */
+function producerText(block: DashboardBlockView): { text: string; title?: string } {
+  const producer = block.producer;
+  if (!producer) return { text: 'Producer unknown' };
+  const verb = producer.kind === 'miner' ? 'Mined by' : 'Staked by';
+  return { text: `${verb} ${truncateHash(producer.address, 8)}`, title: producer.address };
+}
 
 type RewardRole = 'mn' | 'stake' | 'transfer';
 
@@ -138,7 +177,7 @@ function LatestBlockRow({ block, stakeRewardPerBlock, isExpanded, onToggle, pric
   const splitStake =
     stakeRewardPerBlock != null && totalReward >= stakeRewardPerBlock ? stakeRewardPerBlock : 0;
   const splitMasternode = Math.max(totalReward - splitStake, 0);
-  const producerLabel = block.minedBy ? truncateHash(block.minedBy, 8) : 'Unknown';
+  const producer = producerText(block);
 
   return (
     <article className={`latest-item-shell ${isExpanded ? 'expanded' : ''}`}>
@@ -153,37 +192,15 @@ function LatestBlockRow({ block, stakeRewardPerBlock, isExpanded, onToggle, pric
           <HiOutlineCube />
         </div>
         <div className="latest-item-info">
+          {/* The same reward goes to every block, so it waits in the opened details. */}
           <div className="latest-item-primary">
             <span className="latest-height">#{formatNumber(block.height)}</span>
             <span className="latest-txcount">{block.nTx} txs</span>
-            {block.confirmations > 0 && <span className="latest-confirmations">{block.confirmations} conf</span>}
           </div>
           <div className="latest-item-secondary">
-            <span className="mono">{truncateHash(block.hash, 10)}</span>
             <span className="latest-time">{formatAge(block.time)}</span>
-            <span className="latest-producer">Producer {producerLabel}</span>
+            <span className="latest-producer" title={producer.title}>{producer.text}</span>
           </div>
-        </div>
-        <div className="latest-item-value">
-          {splitStake > 0 ? (
-            <>
-              <span className="reward-chip reward-chip-mn">MN {formatCoin(splitMasternode)} DFCN</span>
-              <span className="reward-chip reward-chip-stake">Stake {formatCoin(splitStake)} DFCN</span>
-              <span className="latest-size">
-                Total {formatCoin(totalReward)} DFCN
-                {priceUsd != null && totalReward > 0 && ` ~ $${formatSmallPrice(totalReward * priceUsd, 4)}`}
-              </span>
-            </>
-          ) : (
-            <>
-              <span className="latest-reward">{formatCoin(totalReward)} DFCN</span>
-              <span className="latest-size">
-                {priceUsd != null && totalReward > 0
-                  ? `~ $${formatSmallPrice(totalReward * priceUsd, 4)}`
-                  : formatBytes(block.size)}
-              </span>
-            </>
-          )}
         </div>
         <span className="latest-expand-icon" aria-hidden="true">
           {isExpanded ? <HiOutlineChevronUp /> : <HiOutlineChevronDown />}
@@ -200,6 +217,19 @@ function LatestBlockRow({ block, stakeRewardPerBlock, isExpanded, onToggle, pric
             <Link to={`/block/${encodeURIComponent(String(block.height))}`} className="latest-inline-link">
               Open block <HiOutlineArrowRight />
             </Link>
+          </div>
+
+          <div className="latest-block-reward">
+            {splitStake > 0 && (
+              <>
+                <span className="reward-chip reward-chip-mn">MN {formatCoin(splitMasternode)} DFCN</span>
+                <span className="reward-chip reward-chip-stake">Stake {formatCoin(splitStake)} DFCN</span>
+              </>
+            )}
+            <span className="latest-size">
+              Block reward {formatCoin(totalReward)} DFCN
+              {priceUsd != null && totalReward > 0 ? ` ~ $${formatSmallPrice(totalReward * priceUsd, 4)}` : ` · ${formatBytes(block.size)}`}
+            </span>
           </div>
 
           {txPreviewLoading ? (
@@ -271,6 +301,7 @@ function LatestBlockRow({ block, stakeRewardPerBlock, isExpanded, onToggle, pric
 
 export default function DashboardPage() {
   const [expandedBlockHeight, setExpandedBlockHeight] = useState<number | null>(null);
+  const [hideRewards, setHideRewards] = useState(readHideRewards);
   const { data: overview, isLoading: overviewLoading } = useQuery({
     queryKey: ['dashboard-overview'],
     queryFn: fetchDashboardOverview,
@@ -295,6 +326,16 @@ export default function DashboardPage() {
   const stats = overview?.stats;
   const blocks = overview?.blocks ?? EMPTY_BLOCKS;
   const txs = overview?.txs ?? EMPTY_TXS;
+  // With rewards hidden, the server's own list of other transactions; an older server sends none, so
+  // its latest transactions are filtered here. Never more rows than the block list shows.
+  const listedTxs = useMemo(() => {
+    const source = hideRewards ? (overview?.transfers ?? txs.filter((tx) => !isRewardTx(tx))) : txs;
+    return blocks.length > 0 ? source.slice(0, blocks.length) : source;
+  }, [hideRewards, overview?.transfers, txs, blocks.length]);
+  const toggleHideRewards = (hide: boolean) => {
+    setHideRewards(hide);
+    writeHideRewards(hide);
+  };
 
   const totalValueTransferred24h =
     typeof stats?.totalValueTransferred24h === 'number' ? stats.totalValueTransferred24h : null;
@@ -421,23 +462,38 @@ export default function DashboardPage() {
             <h2 className="card-title">
               <HiOutlineBanknotes /> Latest Transactions
             </h2>
-            <Link to="/txs" className="btn btn-sm btn-secondary">
-              View all <HiOutlineArrowRight />
-            </Link>
+            <div className="latest-header-actions">
+              <label className="latest-toggle">
+                <input
+                  type="checkbox"
+                  checked={hideRewards}
+                  onChange={(event) => toggleHideRewards(event.target.checked)}
+                />
+                Hide rewards
+              </label>
+              <Link to="/txs" className="btn btn-sm btn-secondary">
+                View all <HiOutlineArrowRight />
+              </Link>
+            </div>
           </div>
           <div className="latest-list">
             {overviewLoading ? (
               <div className="latest-placeholder">Loading transactions...</div>
-            ) : txs.length === 0 ? (
-              <div className="latest-placeholder">No transactions available yet.</div>
+            ) : listedTxs.length === 0 ? (
+              <div className="latest-placeholder">
+                {hideRewards && txs.length > 0 ? 'No recent transactions other than rewards.' : 'No transactions available yet.'}
+              </div>
             ) : (
-              txs.map((tx) => (
+              listedTxs.map((tx) => {
+                const kind = classifyListedTx(tx);
+                return (
                 <Link to={txPath(tx.txid)} key={tx.txid} className="latest-item">
                   <div className="latest-item-icon tx-icon">
                     <HiOutlineBanknotes />
                   </div>
                   <div className="latest-item-info">
                     <div className="latest-item-primary">
+                      <span className={`badge latest-kind${kind.tone === 'neutral' ? '' : ` ${kind.tone}`}`}>{kind.label}</span>
                       <span className="mono hash">{truncateHash(tx.txid, 10)}</span>
                       {tx.isDonation && <span className="badge donate">Donate</span>}
                     </div>
@@ -463,7 +519,7 @@ export default function DashboardPage() {
                       <>
                         <span className="latest-amount">{formatCoin(tx.totalValueOut)} DFCN</span>
                         <span className="latest-size">
-                          {tx.isCoinbase ? 'Block Reward' : priceUsd != null && (tx.totalValueOut || 0) > 0
+                          {priceUsd != null && (tx.totalValueOut || 0) > 0
                             ? `~ $${formatSmallPrice((tx.totalValueOut || 0) * priceUsd, 4)}`
                             : null}
                         </span>
@@ -471,7 +527,8 @@ export default function DashboardPage() {
                     )}
                   </div>
                 </Link>
-              ))
+                );
+              })
             )}
           </div>
         </div>

@@ -224,6 +224,52 @@ test('header does not report live when the indexed chain is delayed @smoke', asy
   await expect(status).toHaveAttribute('title', /Latest indexed block is .*old/);
 });
 
+test('header shows a current chain without realtime connection as healthy polling, not as a warning @smoke', async ({ page }) => {
+  await page.routeWebSocket('**/ws', (socket) => socket.close());
+  await page.unroute('**/api/**');
+  await stubApi(page, {
+    '/api/stats': {
+      success: true,
+      data: {
+        blockHeight: 130_000,
+        lastBlockTime: Math.floor(Date.now() / 1000) - 60,
+        difficulty: 1,
+        hashrate: 1,
+        connections: 8,
+        mempool: { size: 0, bytes: 0 },
+        supply: { circulating: 1, max: null },
+        blockReward: 1,
+        stakingReward: 0,
+        avgBlockTime: 150,
+        totalTransactions: 1,
+        totalAddresses: 1,
+        masternodes: 1,
+        stakingWallets: 1,
+      },
+    },
+  });
+
+  await page.goto('/');
+  const status = page.locator('.status-chip-live').first();
+  await expect(status).toContainText('Polling');
+  await expect(status).toHaveAttribute('title', /Indexed chain is current/);
+  await expect(status).not.toHaveClass(/degraded/);
+  // The chip keeps the healthy (green) colour of "Live".
+  const colours = await status.evaluate((chip) => ({
+    label: getComputedStyle(chip.querySelector('.status-chip-label') as Element).color,
+    success: getComputedStyle(document.documentElement).getPropertyValue('--success').trim(),
+  }));
+  const probe = await page.evaluate((value) => {
+    const element = document.createElement('span');
+    element.style.color = value;
+    document.body.append(element);
+    const rgb = getComputedStyle(element).color;
+    element.remove();
+    return rgb;
+  }, colours.success);
+  expect(colours.label).toBe(probe);
+});
+
 test('mobile drawer exposes the same top-level navigation @smoke', async ({ page }, testInfo) => {
   test.skip(testInfo.project.name !== 'mobile-chromium', 'Mobile navigation is covered in the mobile project.');
 

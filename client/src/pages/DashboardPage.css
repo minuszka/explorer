@@ -260,6 +260,13 @@
 
 .latest-card .card-header {
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+/* A long hash or the header controls must not widen a card past a phone screen. */
+.dashboard-latest > .latest-card {
+  min-width: 0;
 }
 
 .latest-list {
@@ -407,6 +414,7 @@
 
 .latest-item-expand-header {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
@@ -506,6 +514,44 @@
   color: var(--text-muted);
 }
 
+/* The opened block: its reward split, above its transactions. */
+.latest-block-reward {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.latest-block-reward .latest-size {
+  margin-top: 0;
+}
+
+.latest-header-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+
+.latest-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 40px;
+  color: var(--text-muted);
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.latest-toggle input {
+  accent-color: var(--accent);
+}
+
+.latest-kind {
+  flex-shrink: 0;
+}
+
 .latest-placeholder {
   padding: 24px 12px;
   text-align: center;
@@ -565,8 +611,10 @@
     grid-template-columns: 1fr;
   }
 
+  /* The amount stays visible on a phone, in a narrower column. */
   .latest-item-value {
-    display: none;
+    min-width: 0;
+    flex-shrink: 0;
   }
 
   .latest-item-expand {

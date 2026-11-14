@@ -602,6 +602,11 @@ export const openApiDocument: OpenApiDocument = {
       get: {
         tags: ['V1'],
         summary: 'Address reward aggregates (coinbase + stake)',
+        description:
+          'coinbase*: block reward transactions that pay the address (in proof-of-stake blocks, its masternode payments). ' +
+          'stake*: transactions in which the address staked; stakeTotal is the net stake reward in DFCN, ' +
+          'what came back to the address minus what it staked. A stake whose amounts are not all stored ' +
+          'is counted in stakeTxCount but adds nothing to stakeTotal.',
         parameters: [{ $ref: '#/components/parameters/Address' }],
         responses: {
           200: OpenApiResponses.ok,

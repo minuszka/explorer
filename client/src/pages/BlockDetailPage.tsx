@@ -13,6 +13,8 @@ import BlockRoleRows from '../components/BlockRoleRows';
 import { formatNumber, truncateHash, formatAge, formatDate, formatBytes, formatCoin } from '../utils/formatters';
 import { blockPath, txPath } from '../utils/routes';
 import CopyButton from '../components/ui/CopyButton';
+import StatePanel from '../components/ui/StatePanel';
+import { getErrorMessage, isNotFoundError, retryFailedRequestOnce } from '../components/flow/flowModel';
 import './PageStyles.css';
 
 export default function BlockDetailPage() {
@@ -32,6 +34,7 @@ function BlockDetailView({ hashOrHeight }: { hashOrHeight: string | undefined })
     queryKey: ['block', hashOrHeight],
     queryFn: () => fetchBlock(blockKey),
     enabled: !!hashOrHeight,
+    retry: retryFailedRequestOnce,
   });
   const { data: txsData, isLoading: txsLoading } = useQuery({
     queryKey: ['block-txs', hashOrHeight, page, limit],
@@ -44,19 +47,30 @@ function BlockDetailView({ hashOrHeight }: { hashOrHeight: string | undefined })
   if (loading) {
     return (
       <div className="fade-in">
-        <div style={{ padding: '3rem', textAlign: 'center', color: 'var(--text-muted)' }}>Loading block...</div>
+        <StatePanel title="Loading block..." />
       </div>
     );
   }
 
-  if (error || !block) {
+  // A refresh that fails after a new block keeps the block on screen; these states are for a page
+  // without one. "Not found" is the server's answer about this block; any other failure says
+  // nothing about it.
+  if (!block) {
     return (
       <div className="fade-in">
-        <div className="card" style={{ padding: '3rem', textAlign: 'center' }}>
-          <h2>Block Not Found</h2>
-          <p className="text-muted">Block "{hashOrHeight}" was not found. It may not be synced yet.</p>
-          <Link to="/blocks" className="btn btn-secondary" style={{ marginTop: '1rem' }}>Browse Blocks</Link>
-        </div>
+        {!error || isNotFoundError(error) ? (
+          <StatePanel
+            title="Block not found"
+            description={`Block "${hashOrHeight ?? ''}" was not found. It may not be synced yet.`}
+            action={<Link to="/blocks" className="btn btn-secondary">Browse Blocks</Link>}
+          />
+        ) : (
+          <StatePanel
+            tone="danger"
+            title="Block could not be loaded"
+            description={getErrorMessage(error, 'Block details could not be loaded.')}
+          />
+        )}
       </div>
     );
   }

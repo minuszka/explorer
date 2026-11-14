@@ -484,10 +484,11 @@
   }
 }
 
-/* Below 360px a longer status word ("Disconnected", "Sync error") leaves no room for the block
-   height beside the logo, the search and the menu buttons. The block height stays in the menu. */
+/* Below 360px a status word longer than "Live" ("Polling", "Disconnected", "Sync error") leaves no
+   room for the block height beside the logo, the search and the menu buttons. The block height
+   stays in the menu. */
 @media (max-width: 359px) {
-  .header-status-chips:not(.compact) .status-chip-live.degraded ~ .status-chip-height {
+  .header-status-chips:not(.compact) .status-chip-live.long-label ~ .status-chip-height {
     display: none;
   }
 }

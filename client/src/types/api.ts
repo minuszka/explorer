@@ -151,6 +151,8 @@ export interface BlockListItemView {
   totalValueOut: number;
   reward: number;
   minedBy: string | null;
+  /** Who made the block, read from its coinstake (or a premine coinbase); null when unknown, absent from older servers. */
+  producer?: { address: string; kind: 'staker' | 'miner' } | null;
   size: number;
 }
 
@@ -170,13 +172,17 @@ export interface TxListItemView {
 
 export type DashboardBlockView = Pick<
   BlockListItemView,
-  'hash' | 'height' | 'time' | 'nTx' | 'confirmations' | 'reward' | 'minedBy' | 'size'
+  'hash' | 'height' | 'time' | 'nTx' | 'confirmations' | 'reward' | 'minedBy' | 'producer' | 'size'
 >;
 
 export type DashboardTxView = Pick<
   TxListItemView,
   'txid' | 'blockheight' | 'blocktime' | 'confirmations' | 'totalValueOut' | 'isCoinbase' | 'isDonation' | 'donationAmount'
->;
+> & {
+  /** What tells a stake from a transfer: the inputs' addresses, the outputs' values, types and first address. */
+  vin?: Array<{ address?: string }>;
+  vout?: Array<{ value?: number; scriptPubKey?: { type?: string; addresses?: string[] } }>;
+};
 
 export type StatsView = StatsDataContract;
 
@@ -208,6 +214,8 @@ export interface DashboardOverviewView {
   sync: Pick<SyncStatusView, 'isRunning' | 'lastSyncedHeight' | 'daemonHeight' | 'blocksRemaining' | 'progress' | 'error'>;
   blocks: DashboardBlockView[];
   txs: DashboardTxView[];
+  /** The latest transactions that are neither a block reward nor a stake; absent from older servers. */
+  transfers?: DashboardTxView[];
 }
 
 export interface RichListEntry {

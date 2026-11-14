@@ -22,8 +22,12 @@ const latestTxsInFlight = new Map<number, Promise<Array<Record<string, unknown>>
 const TX_DETAIL_TTL_MS = Math.max(1000, Math.min(20_000, config.cache.ttlSeconds * 2_000));
 const TX_DETAIL_STALE_MAX_MS = Math.max(TX_DETAIL_TTL_MS * 4, 120_000);
 const TX_DETAIL_CACHE_LIMIT = 512;
-const txDetailCache = new Map<string, { atMs: number; payload: { success: true; data: Record<string, unknown> } }>();
-const txDetailInFlight = new Map<string, Promise<{ success: true; data: Record<string, unknown> } | null>>();
+type TxDetail = Record<string, unknown> & { blockheight: number };
+// The cache holds the transaction, not the answer: the confirmations are counted from the chain tip
+// each time it is served, so a cached transaction does not keep the count it was first read with.
+type TxDetailEntry = { atMs: number; tx: TxDetail; bestHeight: number };
+const txDetailCache = new Map<string, TxDetailEntry>();
+const txDetailInFlight = new Map<string, Promise<TxDetailEntry | null>>();
 const TOTAL_TX_COUNT_TTL_MS = 15_000;
 let totalTxCountCache: { atMs: number; total: number } | null = null;
 let totalTxCountInFlight: Promise<number> | null = null;
@@ -32,14 +36,26 @@ function isFresh(cachedAtMs: number, ttlMs: number): boolean {
   return Date.now() - cachedAtMs < ttlMs;
 }
 
-function setTxDetailCache(key: string, payload: { success: true; data: Record<string, unknown> }): void {
+function setTxDetailCache(key: string, tx: TxDetail, bestHeight: number): TxDetailEntry {
   if (txDetailCache.has(key)) {
     txDetailCache.delete(key);
   } else if (txDetailCache.size >= TX_DETAIL_CACHE_LIMIT) {
     const oldest = txDetailCache.keys().next().value;
     if (oldest) txDetailCache.delete(oldest);
   }
-  txDetailCache.set(key, { atMs: Date.now(), payload });
+  const entry = { atMs: Date.now(), tx, bestHeight };
+  txDetailCache.set(key, entry);
+  return entry;
+}
+
+/**
+ * The answer for a cached transaction: a copy, with the confirmations counted from the current
+ * tip. If the tip cannot be read, the height the transaction was cached with stands in, so a
+ * database outage still gets the last known answer.
+ */
+async function txDetailPayload(entry: TxDetailEntry): Promise<{ success: true; data: TxDetail }> {
+  const bestHeight = await getChainTip().then((tip) => tip.height, () => entry.bestHeight);
+  return { success: true, data: withTxConfirmations({ ...entry.tx }, bestHeight) };
 }
 
 async function getTotalTxCount(): Promise<number> {
@@ -262,30 +278,31 @@ router.get('/:txid', withCachePolicy('short'), async (req: Request, res: Respons
     if (!paramParsed.success) {
       return sendValidationError(res, firstValidationIssueMessage(paramParsed.error));
     }
+    // The schema lowers the id, so it is also the cache key.
     const { txid } = paramParsed.data;
-    const normalizedKey = txid.toLowerCase();
+    const normalizedKey = txid;
     const cachedEntry = txDetailCache.get(normalizedKey);
     const cached =
-      cachedEntry && isFresh(cachedEntry.atMs, TX_DETAIL_TTL_MS) ? cachedEntry.payload : null;
+      cachedEntry && isFresh(cachedEntry.atMs, TX_DETAIL_TTL_MS) ? cachedEntry : null;
     if (cached) {
-      return res.json(cached);
+      return res.json(await txDetailPayload(cached));
     }
     const staleCached =
-      cachedEntry && isFresh(cachedEntry.atMs, TX_DETAIL_STALE_MAX_MS) ? cachedEntry.payload : null;
+      cachedEntry && isFresh(cachedEntry.atMs, TX_DETAIL_STALE_MAX_MS) ? cachedEntry : null;
     const staleFallbackAllowed = !!staleCached;
     const inFlight = txDetailInFlight.get(normalizedKey);
     if (inFlight) {
       try {
-        const dedupedPayload = await inFlight;
-        if (!dedupedPayload) {
+        const dedupedEntry = await inFlight;
+        if (!dedupedEntry) {
           return res
             .status(404)
             .json({ success: false, error: { code: 'NOT_FOUND', message: 'Transaction not found' } });
         }
-        return res.json(dedupedPayload);
+        return res.json(await txDetailPayload(dedupedEntry));
       } catch {
         if (staleFallbackAllowed && staleCached) {
-          return res.json(staleCached);
+          return res.json(await txDetailPayload(staleCached));
         }
         throw new Error('tx detail in-flight query failed');
       }
@@ -297,27 +314,21 @@ router.get('/:txid', withCachePolicy('short'), async (req: Request, res: Respons
         getChainTip(),
       ]);
       if (!tx) return null;
-      const bestHeight = tip.height;
-      const payload = {
-        success: true as const,
-        data: withTxConfirmations(normalizeTransactionAmounts(tx), bestHeight),
-      };
-      setTxDetailCache(normalizedKey, payload);
-      return payload;
+      return setTxDetailCache(normalizedKey, normalizeTransactionAmounts(tx), tip.height);
     })();
 
     txDetailInFlight.set(normalizedKey, fetchPromise);
     try {
-      const payload = await fetchPromise;
-      if (!payload) {
+      const entry = await fetchPromise;
+      if (!entry) {
         return res
           .status(404)
           .json({ success: false, error: { code: 'NOT_FOUND', message: 'Transaction not found' } });
       }
-      return res.json(payload);
+      return res.json(await txDetailPayload(entry));
     } catch (error) {
       if (staleFallbackAllowed && staleCached) {
-        return res.json(staleCached);
+        return res.json(await txDetailPayload(staleCached));
       }
       throw error;
     } finally {

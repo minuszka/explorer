@@ -122,7 +122,10 @@ router.get('/', withCachePolicy('short'), async (req: Request, res: Response) =>
     if (!queryParsed.success) {
       return sendValidationError(res, firstValidationIssueMessage(queryParsed.error));
     }
-    const q = queryParsed.data.q;
+    // Hashes are stored in lower case, so one typed in capitals is lowered before the lookup and
+    // the cache key. Anything else keeps its case: an address is base58, where case is part of it.
+    const typed = queryParsed.data.q;
+    const q = HEX64_RE.test(typed) ? typed.toLowerCase() : typed;
     const cacheKey = q;
 
     const cached = getSearchCache(cacheKey);

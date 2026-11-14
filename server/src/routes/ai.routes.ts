@@ -126,11 +126,13 @@ router.get('/lookup', withCachePolicy('short'), async (req: Request, res: Respon
 
     // ── 64-char hex: try tx first, then block hash ────────────────────────────
     if (isHex64(q)) {
+      // Hashes are stored in lower case; one typed in capitals is the same hash.
+      const hash = q.toLowerCase();
       const [tx, block] = await Promise.all([
-        Transaction.findOne({ txid: q })
+        Transaction.findOne({ txid: hash })
           .select({ txid: 1, blockhash: 1, blockheight: 1, blocktime: 1, totalValueInSat: 1, totalValueOutSat: 1, feeSat: 1, isCoinbase: 1, vin: 1, vout: 1 })
           .lean<Record<string, unknown>>(),
-        Block.findOne({ hash: q })
+        Block.findOne({ hash })
           .select({ hash: 1, height: 1, time: 1, nTx: 1, rewardSat: 1, size: 1 })
           .lean<Record<string, unknown>>(),
       ]);

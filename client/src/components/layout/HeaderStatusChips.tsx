@@ -60,8 +60,10 @@ function HeaderStatusChips({ compact = false }: HeaderStatusChipsProps) {
 
   return (
     <div className={`header-status-chips ${compact ? 'compact' : ''}`} aria-label="Network status">
+      {/* The colour follows the health of the status ("Polling" is healthy); "long-label" marks any
+          word longer than "Live", which leaves less room beside it on a narrow screen. */}
       <div
-        className={`status-chip status-chip-live ${status.label === 'Live' ? 'online' : 'degraded'}`}
+        className={`status-chip status-chip-live ${status.healthy ? 'online' : 'degraded'}${status.label === 'Live' ? '' : ' long-label'}`}
         title={status.title}
       >
         <span className="status-dot" aria-hidden="true" />

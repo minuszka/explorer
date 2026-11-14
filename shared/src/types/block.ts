@@ -22,7 +22,7 @@ export interface IBlock {
   nextblockhash?: string;
   /** The first address the coinbase pays: the masternode in a proof-of-stake block, not its producer. */
   minedBy?: string;
-  /** Block detail only: the producer read from the coinstake (or a premine coinbase); null when unknown. */
+  /** Block detail and block lists: the producer read from the coinstake (or a premine coinbase); null when unknown. */
   producer?: BlockProducer | null;
   /** Block detail only: the one address the coinbase of a proof-of-stake block pays; null when unknown. */
   masternodePayee?: string | null;

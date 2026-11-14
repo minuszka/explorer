@@ -49,11 +49,11 @@ test('the site fonts load from this origin under the production content security
   expect(fontPolicyViolations).toEqual([]);
 });
 
-const delayedStats = () => ({
+const statsWithLastBlockAgo = (seconds: number) => ({
   success: true,
   data: {
     blockHeight: 130_000,
-    lastBlockTime: Math.floor(Date.now() / 1000) - 11 * 60,
+    lastBlockTime: Math.floor(Date.now() / 1000) - seconds,
     difficulty: 1,
     hashrate: 1,
     connections: 8,
@@ -69,17 +69,21 @@ const delayedStats = () => ({
   },
 });
 
+const delayedStats = () => statsWithLastBlockAgo(11 * 60);
+
 // The longest status labels leave the least room next to them. Every case must fit on one row
 // without sideways scrolling, with 40px search and menu buttons. Up to 520px the header shows the
 // logo without the title (which stays the link's name); below 360px the block height moves to the
-// menu while the status is not "Live".
+// menu while the status is not "Live". "Polling" is healthy but as long as "Delayed".
 const NARROW_HEADER_CASES = [
   { width: 600, label: 'Disconnected', titleShown: true, heightInTopBar: true },
   { width: 521, label: 'Disconnected', titleShown: true, heightInTopBar: true },
   { width: 360, label: 'Delayed', titleShown: false, heightInTopBar: true },
   { width: 360, label: 'Disconnected', titleShown: false, heightInTopBar: true },
+  { width: 360, label: 'Polling', titleShown: false, heightInTopBar: true },
   { width: 320, label: 'Delayed', titleShown: false, heightInTopBar: false },
   { width: 320, label: 'Disconnected', titleShown: false, heightInTopBar: false },
+  { width: 320, label: 'Polling', titleShown: false, heightInTopBar: false },
 ];
 
 const disconnectedSync = {
@@ -90,9 +94,11 @@ const disconnectedSync = {
 for (const { width, label, titleShown, heightInTopBar } of NARROW_HEADER_CASES) {
   test(`a ${width}px screen fits the header on one row beside "${label}" @smoke`, async ({ page }) => {
     await page.unroute('**/api/**');
+    // A closed realtime connection with a current chain is "Polling".
+    if (label === 'Polling') await page.routeWebSocket('**/ws', (socket) => socket.close());
     await stubApi(page, label === 'Disconnected'
       ? { '/api/stats': delayedStats(), '/api/sync': disconnectedSync }
-      : { '/api/stats': delayedStats() });
+      : { '/api/stats': label === 'Polling' ? statsWithLastBlockAgo(60) : delayedStats() });
     await page.setViewportSize({ width, height: 780 });
 
     await page.goto('/');

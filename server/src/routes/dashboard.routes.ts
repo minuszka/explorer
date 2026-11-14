@@ -7,14 +7,20 @@ import { withCachePolicy } from '../middleware/cachePolicy';
 import { getChainTip } from '../services/chainTip.service';
 import { rpcService } from '../services/rpc.service';
 import { getStatsData } from '../services/stats.service';
+import { withBlockProducers } from '../services/blockRoles.service';
+import { stakerOf, type RoleTx } from '../utils/blockRoles';
 import { normalizeBlockAmounts, normalizeTransactionAmounts } from '../utils/amounts';
 import { sendInternalError } from '../utils/validation';
 import { mapPublicSyncError } from '../utils/publicSyncError';
 
 const router = Router();
 
+// The two lists on the home page show the same number of rows.
 const BLOCKS_LIMIT = 10;
-const TXS_LIMIT = 14;
+const TXS_LIMIT = 10;
+// "Hide rewards" lists the latest transactions that are neither a block reward nor a stake, found
+// among this many latest non-coinbase transactions.
+const TRANSFER_SCAN = 200;
 const TTL_MS = Math.max(15_000, Math.min(30_000, config.cache.ttlSeconds * 2000));
 const STALE_MAX_MS = Math.max(TTL_MS * 4, 120_000);
 
@@ -28,6 +34,8 @@ const BLOCK_LIST_PROJECTION = {
   minedBy: 1,
   rewardSat: 1,
   size: 1,
+  // The first two transactions name the block's producer (withBlockProducers).
+  txids: { $slice: 2 },
 };
 
 const TX_LIST_PROJECTION = {
@@ -39,8 +47,18 @@ const TX_LIST_PROJECTION = {
   feeSat: 1,
   isCoinbase: 1,
   size: 1,
+  // What the client needs to tell a stake from a transfer (classifyTransaction).
+  'vin.address': 1,
   'vout.valueSat': 1,
+  'vout.scriptPubKey.type': 1,
   'vout.scriptPubKey.addresses': { $slice: 1 },
+};
+
+// What stakerOf needs, so that stakes can be left out of the transfers list.
+const TRANSFER_SCAN_PROJECTION = {
+  ...TX_LIST_PROJECTION,
+  'vout.scriptPubKey.hex': 1,
+  'vout.scriptPubKey.addresses': 1,
 };
 
 function withBlockConfirmations<T extends { height: number; confirmations?: number }>(
@@ -73,6 +91,8 @@ type DashboardPayload = {
     };
     blocks: Array<Record<string, unknown>>;
     txs: Array<Record<string, unknown>>;
+    /** The latest transactions that are neither a block reward nor a stake (for "Hide rewards"). */
+    transfers: Array<Record<string, unknown>>;
   };
 };
 
@@ -80,11 +100,21 @@ let cached: { atMs: number; payload: DashboardPayload } | null = null;
 let inFlight: Promise<DashboardPayload> | null = null;
 
 async function buildDashboardPayload(): Promise<DashboardPayload> {
-  const [stats, tip, blocks, txs, syncState, daemonHeightResult] = await Promise.all([
+  const [stats, tip, blocks, txs, transferCandidates, syncState, daemonHeightResult] = await Promise.all([
     getStatsData(),
     getChainTip(),
-    Block.find().sort({ height: -1 }).limit(BLOCKS_LIMIT).select(BLOCK_LIST_PROJECTION).lean(),
+    Block.find()
+      .sort({ height: -1 })
+      .limit(BLOCKS_LIMIT)
+      .select(BLOCK_LIST_PROJECTION)
+      .lean<Array<Record<string, unknown> & { height: number; txids?: unknown }>>()
+      .then(withBlockProducers),
     Transaction.find().sort({ blockheight: -1, _id: -1 }).limit(TXS_LIMIT).select(TX_LIST_PROJECTION).lean(),
+    Transaction.find({ isCoinbase: false })
+      .sort({ blockheight: -1, _id: -1 })
+      .limit(TRANSFER_SCAN)
+      .select(TRANSFER_SCAN_PROJECTION)
+      .lean<Array<Record<string, unknown> & RoleTx & { blockheight: number }>>(),
     SyncState.findOne({ key: 'main' }).lean(),
     rpcService.getBlockCount().catch(() => null),
   ]);
@@ -93,9 +123,13 @@ async function buildDashboardPayload(): Promise<DashboardPayload> {
   const normalizedBlocks = blocks.map((block) =>
     withBlockConfirmations(normalizeBlockAmounts(block), bestHeight)
   );
-  const normalizedTxs = txs.map((tx) =>
-    withTxConfirmations(normalizeTransactionAmounts(tx, { maxVoutAddresses: 1 }), bestHeight)
-  );
+  const normalizeTx = (tx: Record<string, unknown> & { blockheight: number }) =>
+    withTxConfirmations(normalizeTransactionAmounts(tx, { maxVoutAddresses: 1 }), bestHeight);
+  const normalizedTxs = txs.map(normalizeTx);
+  const transfers = transferCandidates
+    .filter((tx) => stakerOf(tx) == null)
+    .slice(0, TXS_LIMIT)
+    .map(normalizeTx);
 
   const daemonHeight = typeof daemonHeightResult === 'number' ? daemonHeightResult : -1;
   const lastSyncedHeight = syncState?.lastSyncedHeight ?? -1;
@@ -116,6 +150,7 @@ async function buildDashboardPayload(): Promise<DashboardPayload> {
       },
       blocks: normalizedBlocks,
       txs: normalizedTxs,
+      transfers,
     },
   };
 }
