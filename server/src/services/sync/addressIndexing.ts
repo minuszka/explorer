@@ -4,6 +4,8 @@ import { coinToSat, satToBigInt } from '../../utils/amounts';
 export interface AddressDelta {
   receivedSat: bigint;
   sentSat: bigint;
+  /** How many transactions the address takes part in: 1 for one transaction, summed over a block. */
+  txCount: number;
 }
 
 interface VinLike {
@@ -57,7 +59,7 @@ export function collectAddressDeltas(
     if (!addresses?.length) continue;
     const valueSat = normalizeSat(vout.valueSat);
     for (const address of addresses) {
-      const entry = addressMap.get(address) || { receivedSat: 0n, sentSat: 0n };
+      const entry = addressMap.get(address) || { receivedSat: 0n, sentSat: 0n, txCount: 1 };
       entry.receivedSat += valueSat;
       addressMap.set(address, entry);
     }
@@ -66,7 +68,7 @@ export function collectAddressDeltas(
     for (const vin of vins) {
       const valueSat = normalizeSat(vin.valueSat);
       if (!vin.address || valueSat <= 0n) continue;
-      const entry = addressMap.get(vin.address) || { receivedSat: 0n, sentSat: 0n };
+      const entry = addressMap.get(vin.address) || { receivedSat: 0n, sentSat: 0n, txCount: 1 };
       entry.sentSat += valueSat;
       addressMap.set(vin.address, entry);
     }
@@ -79,9 +81,10 @@ export function mergeAddressDeltas(
   source: Map<string, AddressDelta>
 ): void {
   for (const [address, delta] of source) {
-    const current = target.get(address) || { receivedSat: 0n, sentSat: 0n };
+    const current = target.get(address) || { receivedSat: 0n, sentSat: 0n, txCount: 0 };
     current.receivedSat += delta.receivedSat;
     current.sentSat += delta.sentSat;
+    current.txCount += delta.txCount;
     target.set(address, current);
   }
 }
@@ -106,7 +109,7 @@ export function buildAddressDeltaPipeline(
         balanceSat: { $add: [{ $ifNull: ['$balanceSat', zeroDec] }, netSatDec] },
         totalReceivedSat: { $add: [{ $ifNull: ['$totalReceivedSat', zeroDec] }, receivedDec] },
         totalSentSat: { $add: [{ $ifNull: ['$totalSentSat', zeroDec] }, sentDec] },
-        txCount: { $add: [{ $ifNull: ['$txCount', 0] }, 1] },
+        txCount: { $add: [{ $ifNull: ['$txCount', 0] }, delta.txCount] },
         firstSeen: { $min: [{ $ifNull: ['$firstSeen', blocktime] }, blocktime] },
         lastSeen: { $max: [{ $ifNull: ['$lastSeen', 0] }, blocktime] },
       },

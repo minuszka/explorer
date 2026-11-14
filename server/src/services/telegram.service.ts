@@ -32,6 +32,10 @@ class TelegramService {
       return;
     }
 
+    // Started already (start runs again after a database reconnect): a second bot would compete
+    // for the same updates and send every alert twice.
+    if (this.bot) return;
+
     this.bot = new Telegraf(token);
     this.enabled = true;
     this.registerCommands();
@@ -48,6 +52,8 @@ class TelegramService {
 
   stop(): void {
     this.bot?.stop();
+    this.bot = null;
+    this.enabled = false;
     if (this.checkTimer) {
       clearInterval(this.checkTimer);
       this.checkTimer = null;

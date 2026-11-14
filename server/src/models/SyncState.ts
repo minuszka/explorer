@@ -12,6 +12,7 @@ export interface SyncStateDocument extends Document {
   error: string | null;
   addressIndexVersion?: number;
   satoshiDataVersion?: number;
+  addressStatsVersion?: number;
 }
 
 const syncStateSchema = new Schema<SyncStateDocument>({
@@ -26,6 +27,8 @@ const syncStateSchema = new Schema<SyncStateDocument>({
   error: { type: String, default: null },
   addressIndexVersion: { type: Number, default: 0 },
   satoshiDataVersion: { type: Number, default: 0 },
+  // Version of how address statistics are counted; an older one rebuilds the address index once.
+  addressStatsVersion: { type: Number, default: 0 },
 });
 
 export const SyncState = mongoose.model<SyncStateDocument>('SyncState', syncStateSchema);

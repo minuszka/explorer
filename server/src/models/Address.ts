@@ -27,3 +27,12 @@ addressSchema.index({ balanceSat: -1 });
 addressSchema.index({ firstSeen: -1 });
 
 export const Address = mongoose.model<AddressDocument>('Address', addressSchema);
+
+// A rebuild of the address index writes into this collection and then renames it over the live
+// one (sync.service), so readers never see a half-built index. It exists only during a rebuild:
+// the model neither creates the collection nor its indexes on its own.
+export const ADDRESS_REBUILD_COLLECTION = 'addresses_rebuild';
+const addressRebuildSchema = addressSchema.clone();
+addressRebuildSchema.set('autoCreate', false);
+addressRebuildSchema.set('autoIndex', false);
+export const AddressRebuild = mongoose.model<AddressDocument>('AddressRebuild', addressRebuildSchema, ADDRESS_REBUILD_COLLECTION);

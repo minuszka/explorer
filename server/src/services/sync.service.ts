@@ -6,7 +6,7 @@ import { invalidateDashboardCache } from '../routes/dashboard.routes';
 import { invalidateRichlistCache } from '../routes/richlist.routes';
 import { Block } from '../models/Block';
 import { Transaction } from '../models/Transaction';
-import { Address } from '../models/Address';
+import { Address, AddressRebuild, ADDRESS_REBUILD_COLLECTION } from '../models/Address';
 import { SyncState } from '../models/SyncState';
 import mongoose from 'mongoose';
 import { COIN } from '@defcon/shared';
@@ -31,6 +31,7 @@ import {
   collectInvolvedAddresses,
   mergeAddressDeltas,
   normalizeSat,
+  type AddressDelta,
 } from './sync/addressIndexing';
 import { runScheduledSyncAttempt } from './sync/syncScheduling';
 
@@ -64,6 +65,11 @@ class SyncService {
   private currentSync: Promise<void> | null = null;
   // How long stop() waits for the current block before it leaves the lock to startup recovery.
   private stopTimeoutMs = 15_000;
+  // Set by start() until stop(): a second start() (for example after a database reconnect) does nothing.
+  private started = false;
+  // A lock whose holder has shown no heartbeat for this long may be taken over. Each indexed block
+  // and each batch of an address rebuild writes a heartbeat, so this is far above any normal gap.
+  private readonly SYNC_LOCK_EXPIRY_MS = 10 * 60 * 1000;
   private readonly LOG_INTERVAL = 100;
   private readonly REBUILD_LOG_INTERVAL = 10000;
   private readonly ADDRESS_BULK_FLUSH_THRESHOLD = 2000;
@@ -72,6 +78,9 @@ class SyncService {
   private readonly CURSOR_MAX_TIME_MS = Math.max(30_000, config.rpc.timeout);
   private readonly ADDRESS_INDEX_VERSION = 3;
   private readonly SATOSHI_DATA_VERSION = 3;
+  // 1: txCount counts each transaction an address takes part in (it counted blocks during live
+  // sync and transactions in a rebuild). An older stored version rebuilds the address index once.
+  private readonly ADDRESS_STATS_VERSION = 1;
   private readonly SAT_MULTIPLIER = 10 ** COIN.DECIMALS;
   private readonly TX_EVENT_MAX_PER_BLOCK = 250;
 
@@ -153,7 +162,8 @@ class SyncService {
     return before?.addressRebuildRequired === true;
   }
 
-  private async recoverStartupState(): Promise<void> {
+  /** Repairs what a previous run left behind; returns true when it rebuilt the address index. */
+  private async recoverStartupState(): Promise<boolean> {
     const syncState = await SyncState.findOne({ key: 'main' }).lean();
     const indexedTip = await Block.findOne({})
       .sort({ height: -1 })
@@ -174,7 +184,7 @@ class SyncService {
         },
         { upsert: true }
       );
-      return;
+      return false;
     }
 
     // If sync state points past our indexed tip (possible after crash during rollback),
@@ -209,7 +219,7 @@ class SyncService {
       );
     }
 
-    if (!recoveryPlan.rebuildAddressIndex) return;
+    if (!recoveryPlan.rebuildAddressIndex) return false;
 
     logger.warn('Detected pending address index rebuild flag. Rebuilding from transactions...');
     await this.rebuildAddressIndexFromTransactions();
@@ -223,14 +233,66 @@ class SyncService {
       { upsert: true }
     );
     logger.info('Pending address rebuild recovered successfully.');
+    return true;
+  }
+
+  /**
+   * Brings the stored address statistics to ADDRESS_STATS_VERSION: if the stored version is older,
+   * rebuilds the address index once and records the version. A rebuild that startup recovery has
+   * just done counts, so a start never rebuilds twice. Interrupted before the version is written,
+   * the next start simply rebuilds again.
+   */
+  private async ensureAddressStatsVersion(rebuiltThisStart: boolean): Promise<void> {
+    const syncState = await SyncState.findOne({ key: 'main' }).select({ addressStatsVersion: 1 }).lean<{ addressStatsVersion?: number }>();
+    const currentVersion = syncState?.addressStatsVersion ?? 0;
+    if (currentVersion >= this.ADDRESS_STATS_VERSION) return;
+
+    if (!rebuiltThisStart) {
+      logger.warn(
+        `Address statistics version ${currentVersion} -> ${this.ADDRESS_STATS_VERSION}: rebuilding the address index once...`
+      );
+      const startedAt = Date.now();
+      await this.rebuildAddressIndexFromTransactions();
+      logger.info(`Address statistics rebuild finished in ${Math.round((Date.now() - startedAt) / 1000)} s.`);
+    }
+    await SyncState.findOneAndUpdate(
+      { key: 'main' },
+      { addressStatsVersion: this.ADDRESS_STATS_VERSION, heartbeatAt: new Date() },
+      { upsert: true }
+    );
+  }
+
+  /** Drops the rebuild collection if it exists (left by an interrupted rebuild, or after a failure). */
+  private async dropAddressRebuildCollection(): Promise<void> {
+    const existing = await mongoose.connection.db!
+      .listCollections({ name: ADDRESS_REBUILD_COLLECTION }, { nameOnly: true })
+      .toArray();
+    if (existing.length > 0) await AddressRebuild.collection.drop();
   }
 
   // Rebuild address balances from stored transactions.
   // This gives a deterministic recovery path after rollback/restart on MongoDB tiers
   // where multi-collection transactions are unavailable.
+  // The new index is built in a separate collection with the same indexes and renamed over the
+  // live one at the end, so readers keep the complete old data while it runs, and a rebuild that
+  // fails leaves the old data as it was (the caller keeps addressRebuildRequired set).
   private async rebuildAddressIndexFromTransactions(): Promise<void> {
-    await Address.deleteMany({});
+    await this.dropAddressRebuildCollection();
+    await AddressRebuild.createCollection();
+    await AddressRebuild.createIndexes();
+    try {
+      await this.writeAddressIndexInto(AddressRebuild);
+      await AddressRebuild.collection.rename(Address.collection.collectionName, { dropTarget: true });
+    } catch (error) {
+      await this.dropAddressRebuildCollection().catch((dropError) =>
+        logger.error('Could not drop the unfinished address rebuild collection:', dropError)
+      );
+      throw error;
+    }
+  }
 
+  /** Computes every address from the stored transactions into `target`, which starts empty. */
+  private async writeAddressIndexInto(target: typeof AddressRebuild): Promise<void> {
     const cursor = Transaction.find({})
       // Sort by blockheight to guarantee correct chronological order for balance deltas.
       // The compound index { blockheight: -1, _id: -1 } exists; ascending scan is fine.
@@ -252,8 +314,10 @@ class SyncService {
 
     const flushBulk = async () => {
       if (bulkOps.length === 0) return;
-      await Address.bulkWrite(bulkOps, { ordered: false });
+      await target.bulkWrite(bulkOps, { ordered: false });
       bulkOps.length = 0;
+      // A long rebuild keeps its sync lock from looking abandoned (see acquireSyncLock).
+      await SyncState.updateOne({ key: 'main' }, { heartbeatAt: new Date() });
     };
 
     for await (const tx of cursor) {
@@ -262,28 +326,8 @@ class SyncService {
         continue;
       }
 
-      const addressMap = new Map<string, { receivedSat: bigint; sentSat: bigint }>();
-
-      for (const vout of tx.vout || []) {
-        const addresses = vout.scriptPubKey?.addresses;
-        if (!addresses?.length) continue;
-        const valueSat = normalizeSat(vout.valueSat);
-        for (const addr of addresses) {
-          const entry = addressMap.get(addr) || { receivedSat: 0n, sentSat: 0n };
-          entry.receivedSat += valueSat;
-          addressMap.set(addr, entry);
-        }
-      }
-
-      if (!tx.isCoinbase) {
-        for (const vin of tx.vin || []) {
-          const valueSat = normalizeSat(vin.valueSat);
-          if (!vin.address || valueSat <= 0n) continue;
-          const entry = addressMap.get(vin.address) || { receivedSat: 0n, sentSat: 0n };
-          entry.sentSat += valueSat;
-          addressMap.set(vin.address, entry);
-        }
-      }
+      // The same per-transaction changes live sync collects (processTransaction).
+      const addressMap = collectAddressDeltas(tx.vin || [], tx.vout || [], !!tx.isCoinbase);
 
       for (const [addr, update] of addressMap) {
         bulkOps.push({
@@ -595,21 +639,32 @@ class SyncService {
   }
 
   async start(): Promise<void> {
-    if (this.isRunning) {
+    if (this.started || this.isRunning) {
       logger.warn('Sync service is already running');
       return;
     }
+    this.started = true;
 
     logger.info('Starting blockchain sync service...');
     this.stopRequested = false;
 
-    await this.ensureIndexVersion();
-    await this.ensureSatoshiDataVersion();
-    await this.recoverStartupState();
-    await this.addressResolver.preInferVersionByte();
+    try {
+      await this.ensureIndexVersion();
+      await this.ensureSatoshiDataVersion();
+      const rebuiltThisStart = await this.recoverStartupState();
+      await this.ensureAddressStatsVersion(rebuiltThisStart);
+      await this.addressResolver.preInferVersionByte();
 
-    // Run initial sync
-    await this.sync();
+      // Run initial sync
+      await this.sync();
+    } catch (error) {
+      // A failed start can be tried again, for example on the next database reconnect.
+      this.started = false;
+      throw error;
+    }
+
+    // Stopped while starting: no periodic sync.
+    if (this.stopRequested) return;
 
     // Set up periodic sync for new blocks.
     // Guard: skip if previous sync is still running to prevent overlap.
@@ -629,6 +684,7 @@ class SyncService {
       this.intervalId = null;
     }
     this.stopRequested = true;
+    this.started = false;
 
     // A running sync stops between blocks and releases the lock itself. If the block in progress
     // does not finish in time, the lock stays: the next start sees it and rebuilds the address index.
@@ -677,23 +733,46 @@ class SyncService {
     }
   }
 
+  /**
+   * Atomic database lock, so that only one run indexes at a time. It is taken when free, or when
+   * its holder has shown no heartbeat for SYNC_LOCK_EXPIRY_MS (or never did): a run that died
+   * without releasing it, for example because the database error that ended it also stopped its
+   * final write. Taking over an expired lock requests an address rebuild, as startup recovery does
+   * for a lock left behind, since the holder may have stopped in the middle of a block.
+   */
+  private async acquireSyncLock(now: Date): Promise<boolean> {
+    // The state document normally exists already (ensureIndexVersion writes it). Create it if it
+    // does not, without touching an existing one, so the lock updates below need no upsert: an
+    // upsert against a held lock would try to insert a second document with the same key.
+    await SyncState.updateOne({ key: 'main' }, { $setOnInsert: { key: 'main' } }, { upsert: true });
+
+    const lock = { isRunning: true, startedAt: now, heartbeatAt: now, error: null };
+    const free = await SyncState.findOneAndUpdate({ key: 'main', isRunning: { $ne: true } }, lock, { new: true })
+      .select({ _id: 1 })
+      .lean();
+    if (free) return true;
+
+    const expiredBefore = new Date(now.getTime() - this.SYNC_LOCK_EXPIRY_MS);
+    const takenOver = await SyncState.findOneAndUpdate(
+      { key: 'main', isRunning: true, $or: [{ heartbeatAt: { $lt: expiredBefore } }, { heartbeatAt: null }] },
+      { ...lock, addressRebuildRequired: true },
+      { new: true }
+    )
+      .select({ _id: 1 })
+      .lean();
+    if (!takenOver) return false;
+
+    logger.warn(
+      `Took over a sync lock without a heartbeat for ${this.SYNC_LOCK_EXPIRY_MS / 60_000} minutes; ` +
+        'rebuilding the address index first.'
+    );
+    return true;
+  }
+
   private async runSync(): Promise<void> {
     const syncStartedAt = new Date();
 
-    // Atomic DB-level lock: only acquire if not already running.
-    // This prevents race conditions when multiple instances or overlapping calls exist.
-    const lockAcquired = await SyncState.findOneAndUpdate(
-      { key: 'main', isRunning: { $ne: true } },
-      {
-        isRunning: true,
-        startedAt: syncStartedAt,
-        heartbeatAt: syncStartedAt,
-        error: null,
-      },
-      { upsert: true, new: true }
-    );
-
-    if (!lockAcquired || lockAcquired.isRunning !== true) {
+    if (!(await this.acquireSyncLock(syncStartedAt))) {
       logger.debug('Sync lock not acquired — another instance is running');
       return;
     }
@@ -855,16 +934,21 @@ class SyncService {
     } catch (error) {
       logger.error('Sync error:', error);
       const errorMessage = error instanceof Error ? error.message : 'Unknown sync error';
-      await SyncState.findOneAndUpdate(
-        { key: 'main' },
-        {
-          isRunning: false,
-          startedAt: null,
-          heartbeatAt: new Date(),
-          error: errorMessage,
-        },
-        { upsert: true }
-      );
+      try {
+        await SyncState.findOneAndUpdate(
+          { key: 'main' },
+          {
+            isRunning: false,
+            startedAt: null,
+            heartbeatAt: new Date(),
+            error: errorMessage,
+          },
+          { upsert: true }
+        );
+      } catch (stateError) {
+        // Often the same database trouble. The lock stays held until it expires (acquireSyncLock).
+        logger.error('Could not record the sync error or release the sync lock:', stateError);
+      }
       // WebSocket clients are public: broadcast the masked message, not the raw one.
       this.publishSyncStatus('error', daemonHeight, lastKnownSyncedHeight, {
         error: mapPublicSyncError(errorMessage, true).error,
@@ -936,7 +1020,7 @@ class SyncService {
     let totalValueOutSat = 0n;
     let minedBy: string | undefined;
     const txids: string[] = [];
-    const blockAddressDeltas = new Map<string, { receivedSat: bigint; sentSat: bigint }>();
+    const blockAddressDeltas = new Map<string, AddressDelta>();
 
     const txEntries = (rpcBlock.tx || []) as Array<string | RpcTransaction>;
 
@@ -1069,7 +1153,7 @@ class SyncService {
   ): Promise<{
     totalValueOutSat: bigint;
     isCoinbase: boolean;
-    addressDeltas?: Map<string, { receivedSat: bigint; sentSat: bigint }>;
+    addressDeltas?: Map<string, AddressDelta>;
   }> {
     const isCoinbase = rpcTx.vin.length > 0 && !!rpcTx.vin[0].coinbase;
 
@@ -1323,7 +1407,7 @@ class SyncService {
   // ── Address Balance Updates ─────────────────────────────────────
 
   private async applyAddressDeltas(
-    addressMap: Map<string, { receivedSat: bigint; sentSat: bigint }>,
+    addressMap: Map<string, AddressDelta>,
     blocktime: number
   ): Promise<boolean> {
     if (addressMap.size === 0) return false;
@@ -1409,6 +1493,7 @@ class SyncService {
         error: null,
         addressIndexVersion: this.ADDRESS_INDEX_VERSION,
         satoshiDataVersion: this.SATOSHI_DATA_VERSION,
+        addressStatsVersion: this.ADDRESS_STATS_VERSION,
       },
       { upsert: true }
     );
